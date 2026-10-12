@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 44, 34, 30;
+  --background-rgb: 26, 22, 20;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background-color: #161311;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  overflow-x: hidden;
+}
+
+/* Custom detective styling */
+.cork-pattern {
+  background-color: #211c19;
+  background-image: radial-gradient(#2d2622 1px, transparent 1px), radial-gradient(#1c1714 1px, #211c19 1px);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+}
+
+.paper-texture {
+  background-color: #f7f1e5;
+  background-image: linear-gradient(180deg, rgba(230,215,190,0.3) 0%, rgba(247,241,229,0.9) 100%);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), inset 0 0 40px rgba(180, 150, 110, 0.2);
+}
+
+.tape-top {
+  position: relative;
+}
+.tape-top::before {
+  content: "";
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-1deg);
+  width: 90px;
+  height: 22px;
+  background: rgba(255, 248, 220, 0.65);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  z-index: 10;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}
+
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes roomSlideNext {
+  0% { opacity: 0; transform: translateX(50px) scale(0.96); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.animate-roomSlide {
+  animation: roomSlideNext 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 10px rgba(234, 179, 8, 0.4); transform: scale(1); }
+  50% { box-shadow: 0 0 20px rgba(234, 179, 8, 0.85); transform: scale(1.02); }
+}
+
+.animate-pulseGlow {
+  animation: pulseGlow 2s infinite ease-in-out;
+}
