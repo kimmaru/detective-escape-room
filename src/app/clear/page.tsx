@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { Award, Clock, RotateCcw, Home, Sparkles, CheckCircle2 } from "lucide-react";
+import { Award, Clock, RotateCcw, Home, Sparkles, CheckCircle2, Lightbulb } from "lucide-react";
 import confetti from "canvas-confetti";
 
 export default function ClearPage() {
@@ -11,14 +11,37 @@ export default function ClearPage() {
   const [session, setSession] = useState<any>(null);
 
   useEffect(() => {
+    let activePin = "";
     try {
       const saved = localStorage.getItem("escape_session");
       if (saved) {
         const parsed = JSON.parse(saved);
         setSession(parsed);
+        if (parsed.pin) activePin = parsed.pin;
       }
     } catch (e) {
       console.warn("Storage read failed:", e);
+    }
+
+    // Sync latest state from server to guarantee totalTimeSeconds and totalHintsUsed
+    if (activePin) {
+      fetch(`/api/game/state?pin=${activePin}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && data.session) {
+            setSession((prev: any) => {
+              const merged = { ...prev, ...data.session };
+              if (!merged.totalTimeSeconds && merged.startedAt && merged.clearedAt) {
+                merged.totalTimeSeconds = Math.max(1, Math.floor((merged.clearedAt - merged.startedAt) / 1000));
+              }
+              try {
+                localStorage.setItem("escape_session", JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
+          }
+        })
+        .catch(() => {});
     }
 
     // Trigger celebratory confetti cannon
@@ -49,14 +72,24 @@ export default function ClearPage() {
   }, []);
 
   const formatTotalTime = (seconds: number) => {
-    if (!seconds) return "기록 없음";
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
+    let effectiveSeconds = seconds;
+    if (!effectiveSeconds || effectiveSeconds <= 0) {
+      if (session?.startedAt && session?.clearedAt) {
+        effectiveSeconds = Math.max(1, Math.floor((session.clearedAt - session.startedAt) / 1000));
+      } else {
+        return "기록 없음";
+      }
+    }
+    const hrs = Math.floor(effectiveSeconds / 3600);
+    const mins = Math.floor((effectiveSeconds % 3600) / 60);
+    const secs = effectiveSeconds % 60;
     if (hrs > 0) {
       return `${hrs}시간 ${mins}분 ${secs}초`;
     }
-    return `${mins}분 ${secs}초`;
+    if (mins > 0) {
+      return `${mins}분 ${secs}초`;
+    }
+    return `${secs}초`;
   };
 
   return (
@@ -118,6 +151,16 @@ export default function ClearPage() {
             </span>
             <span className="text-base font-mono font-bold text-emerald-400">
               {formatTotalTime(session?.totalTimeSeconds || 0)}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between pb-3 border-b border-stone-800">
+            <span className="text-xs text-stone-400 flex items-center gap-1">
+              <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
+              사용한 힌트
+            </span>
+            <span className="text-base font-mono font-bold text-amber-300">
+              {session?.totalHintsUsed ?? 0}개
             </span>
           </div>
 

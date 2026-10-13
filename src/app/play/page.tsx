@@ -39,6 +39,7 @@ export default function PlayPage() {
   const [currentRoom, setCurrentRoom] = useState<number>(1);
   const [puzzle, setPuzzle] = useState<PuzzleData | null>(null);
   const [unlockedHints, setUnlockedHints] = useState<HintItem[]>([]);
+  const [totalHintsUsed, setTotalHintsUsed] = useState<number>(0);
   const [totalPuzzles, setTotalPuzzles] = useState<number>(10);
 
   // Staging & Animations
@@ -109,6 +110,9 @@ export default function PlayPage() {
       setPuzzle(data.puzzle);
       setUnlockedHints(data.unlockedHints || []);
       setTotalPuzzles(data.totalPuzzles || 10);
+      if (typeof s.totalHintsUsed === "number") {
+        setTotalHintsUsed(s.totalHintsUsed);
+      }
 
       if (s.startedAt) startedAtRef.current = s.startedAt;
       if (s.roomEnteredAt) roomEnteredAtRef.current = s.roomEnteredAt;
@@ -144,6 +148,9 @@ export default function PlayPage() {
       setPin(parsed.pin);
       setNickname(parsed.nickname || `탐정_${parsed.pin}`);
       setCurrentRoom(parsed.currentRoom || 1);
+      if (typeof parsed.totalHintsUsed === "number") {
+        setTotalHintsUsed(parsed.totalHintsUsed);
+      }
       if (parsed.startedAt) startedAtRef.current = parsed.startedAt;
       if (parsed.roomEnteredAt) roomEnteredAtRef.current = parsed.roomEnteredAt;
       if (parsed.lastHintUnlockedAt) lastHintAtRef.current = parsed.lastHintUnlockedAt;
@@ -166,12 +173,13 @@ export default function PlayPage() {
           currentRoom,
           startedAt: startedAtRef.current,
           roomEnteredAt: roomEnteredAtRef.current,
+          totalHintsUsed,
         }),
       }).catch(() => {});
     }, 15000);
 
     return () => clearInterval(interval);
-  }, [pin, currentRoom]);
+  }, [pin, currentRoom, totalHintsUsed]);
 
   // Stable callback for typing completion
   const handleTypingComplete = useCallback(() => {
@@ -218,6 +226,16 @@ export default function PlayPage() {
         text: data.hintText,
       };
       setUnlockedHints((prev) => [...prev, newHintItem]);
+      const newHintCount = typeof data.totalHintsUsed === "number" ? data.totalHintsUsed : totalHintsUsed + 1;
+      setTotalHintsUsed(newHintCount);
+      try {
+        const saved = localStorage.getItem("escape_session");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          parsed.totalHintsUsed = newHintCount;
+          localStorage.setItem("escape_session", JSON.stringify(parsed));
+        }
+      } catch {}
       lastHintAtRef.current = Date.now();
       setHintCooldown(120);
       setCanUnlockNext(false);
@@ -260,6 +278,32 @@ export default function PlayPage() {
       setFeedbackMsg({ type: "success", text: "정답입니다!" });
 
       if (data.isCleared) {
+        const now = Date.now();
+        const start = startedAtRef.current;
+        let finalSeconds = 0;
+        if (data.totalTimeSeconds && data.totalTimeSeconds > 0) {
+          finalSeconds = data.totalTimeSeconds;
+        } else if (start) {
+          finalSeconds = Math.max(1, Math.floor((now - start) / 1000));
+        } else {
+          finalSeconds = Math.max(1, elapsedSeconds);
+        }
+
+        try {
+          const saved = localStorage.getItem("escape_session");
+          const parsed = saved ? JSON.parse(saved) : {};
+          const updated = {
+            ...parsed,
+            isCleared: true,
+            clearedAt: now,
+            totalTimeSeconds: finalSeconds,
+            totalHintsUsed: data.totalHintsUsed ?? totalHintsUsed,
+          };
+          localStorage.setItem("escape_session", JSON.stringify(updated));
+        } catch (err) {
+          console.warn("Storage save failed:", err);
+        }
+
         router.push("/clear");
       } else {
         // Room transition motion
@@ -370,16 +414,11 @@ export default function PlayPage() {
                 </button>
               </div>
 
-              {/* Question Text (format guide deleted as requested) */}
-              <div className="mt-3 p-3.5 rounded-xl bg-[#1d1815] border border-stone-800">
-                <p className="text-stone-100 font-bold text-sm leading-snug">
-                  {puzzle.question}
-                </p>
-                <div className="mt-2 text-right">
-                  <span className="text-[11px] text-stone-400">
-                    이미지를 터치하면 크게 볼 수 있습니다
-                  </span>
-                </div>
+              {/* Image Touch Guide */}
+              <div className="mt-2.5 text-center">
+                <span className="text-[11px] text-stone-400">
+                  이미지를 터치하면 크게 볼 수 있습니다
+                </span>
               </div>
             </div>
           </section>

@@ -119,6 +119,9 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
     session.status = "cleared";
     session.totalTimeSeconds = clientState.totalTimeSeconds || session.totalTimeSeconds;
   }
+  if (typeof clientState.totalHintsUsed === "number") {
+    session.totalHintsUsed = Math.max(session.totalHintsUsed || 0, clientState.totalHintsUsed);
+  }
   if (clientState.startedAt) {
     session.startedAt = clientState.startedAt;
   }
@@ -145,6 +148,8 @@ export function submitAnswer(
   isCleared?: boolean;
   message?: string;
   totalTimeSeconds?: number;
+  totalHintsUsed?: number;
+  session?: PlayerSession;
 } {
   const cleanPin = pin.trim().toUpperCase();
   const session = getSession(cleanPin);
@@ -155,7 +160,14 @@ export function submitAnswer(
   const roomToValidate = clientCurrentRoom || session.currentRoom;
 
   if (session.isCleared || roomToValidate > 10) {
-    return { success: true, isCleared: true, message: "이미 모든 방을 클리어했습니다!" };
+    return {
+      success: true,
+      isCleared: true,
+      message: "이미 모든 방을 클리어했습니다!",
+      totalTimeSeconds: session.totalTimeSeconds,
+      totalHintsUsed: session.totalHintsUsed || 0,
+      session,
+    };
   }
 
   const currentPuzzle = PUZZLES.find((p) => p.roomNumber === roomToValidate);
@@ -181,7 +193,7 @@ export function submitAnswer(
     session.clearedAt = now;
     session.status = "cleared";
     if (session.startedAt) {
-      session.totalTimeSeconds = Math.floor((now - session.startedAt) / 1000);
+      session.totalTimeSeconds = Math.max(1, Math.floor((now - session.startedAt) / 1000));
     }
   } else {
     session.currentRoom = nextRoomNum;
@@ -201,6 +213,8 @@ export function submitAnswer(
     nextRoom: session.isCleared ? 10 : session.currentRoom,
     isCleared: session.isCleared,
     totalTimeSeconds: session.totalTimeSeconds,
+    totalHintsUsed: session.totalHintsUsed || 0,
+    session,
     message: session.isCleared ? "축하합니다! 모든 방탈출을 완료했습니다!" : "정답입니다! 다음 방으로 이동합니다.",
   };
 }
@@ -213,6 +227,7 @@ export function unlockHint(
   hintIndex?: number;
   hintText?: string;
   unlockedHints?: number[];
+  totalHintsUsed?: number;
   message?: string;
   remainingCooldown?: number;
 } {
@@ -251,6 +266,7 @@ export function unlockHint(
   }
 
   session.unlockedHints.push(nextHintIdx);
+  session.totalHintsUsed = (session.totalHintsUsed || 0) + 1;
   session.lastHintUnlockedAt = now;
   session.lastActiveAt = now;
 
@@ -263,6 +279,7 @@ export function unlockHint(
     hintIndex: nextHintIdx,
     hintText: puzzle.hints[nextHintIdx],
     unlockedHints: session.unlockedHints,
+    totalHintsUsed: session.totalHintsUsed,
   };
 }
 
@@ -277,7 +294,7 @@ export function passRoomAdmin(pin: string): { success: boolean; nextRoom?: numbe
     session.clearedAt = now;
     session.status = "cleared";
     if (session.startedAt) {
-      session.totalTimeSeconds = Math.floor((now - session.startedAt) / 1000);
+      session.totalTimeSeconds = Math.max(1, Math.floor((now - session.startedAt) / 1000));
     }
   } else {
     session.currentRoom += 1;
@@ -309,6 +326,7 @@ export function resetSession(pin?: string) {
         isCleared: false,
         clearedAt: null,
         totalTimeSeconds: 0,
+        totalHintsUsed: 0,
         lastActiveAt: null,
         status: "ready",
       };

@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "명탐정의 사건일지 | 가인과 아벨",
-  description: "모바일 인터랙티브 방탈출 웹게임 - 명탐정의 사건일지",
+  title: "???의 사건일지 | 가인과 아벨",
+  description: "모바일 인터랙티브 방탈출 웹게임 - ???의 사건일지",
   icons: {
     icon: "/images/clear.png",
   },

@@ -12,6 +12,7 @@ export interface PlayerSession {
   isCleared: boolean;
   clearedAt: number | null;
   totalTimeSeconds: number;
+  totalHintsUsed: number;
   lastActiveAt: number | null;
   status: "ready" | "playing" | "cleared" | "inactive";
 }
@@ -37,6 +38,7 @@ export function generateDefaultPins(): Record<string, PlayerSession> {
           isCleared: false,
           clearedAt: null,
           totalTimeSeconds: 0,
+          totalHintsUsed: 0,
           lastActiveAt: null,
           status: "ready",
         };

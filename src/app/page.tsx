@@ -91,7 +91,7 @@ export default function HomePage() {
       <div className="absolute inset-0 z-0">
         <Image
           src="/images/cover.png"
-          alt="명탐정의 사건일지"
+          alt="???의 사건일지"
           fill
           priority
           className="object-cover object-top opacity-35"
@@ -114,10 +114,10 @@ export default function HomePage() {
 
       {/* Main Content Area */}
       <div className="relative z-10 flex-1 flex flex-col items-center justify-end px-6 pb-12 pt-8 text-center">
-        {/* Title Area (Requested: '카톡 방탈출 시리즈', '- 가인과 아벨 편 -' 삭제) */}
+        {/* Title Area */}
         <div className="mb-6 relative">
           <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-stone-100 drop-shadow-md">
-            명탐정의 사건일지
+            ???의 사건일지
           </h1>
         </div>
 
@@ -160,7 +160,7 @@ export default function HomePage() {
         </div>
 
         <div className="mt-8 text-[11px] text-stone-500 flex items-center gap-2">
-          <span>배정받은 수사 암호(6자리)를 입력하여 접속합니다.</span>
+          <span>배정받은 수사 암호를 입력하여 접속합니다.</span>
         </div>
       </div>
 
@@ -197,16 +197,12 @@ export default function HomePage() {
                   maxLength={6}
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value.toUpperCase())}
-                  placeholder="6자리 암호 입력 (예: 7K9X2M)"
+                  placeholder="암호 입력"
                   className="w-full px-4 py-3.5 rounded-xl bg-stone-900 border-2 border-stone-700 text-stone-100 font-mono text-center text-xl tracking-widest uppercase focus:outline-none focus:border-amber-500"
-                  autoFocus
                   autoCapitalize="characters"
                   autoCorrect="off"
                   spellCheck="false"
                 />
-                <span className="text-[11px] text-stone-400 mt-1.5 block text-center">
-                  배정받은 6자리 영문+숫자 혼합 암호를 입력하세요.
-                </span>
               </div>
 
               <div>
