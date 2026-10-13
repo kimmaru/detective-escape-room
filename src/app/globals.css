@@ -83,3 +83,31 @@ body {
 .animate-pulseGlow {
   animation: pulseGlow 2s infinite ease-in-out;
 }
+
+/* 글씨 진동 효과 (오답: 빨간색 '아니야') */
+@keyframes vibrateText {
+  0% { transform: scale(0.85); opacity: 0; }
+  15% { transform: scale(1.1) translate(-6px, -2px); opacity: 1; }
+  30% { transform: scale(1) translate(6px, 2px); }
+  45% { transform: scale(1.05) translate(-5px, 2px); }
+  60% { transform: scale(0.98) translate(5px, -2px); }
+  75% { transform: scale(1.02) translate(-3px, -1px); }
+  90% { transform: scale(1) translate(2px, 1px); }
+  100% { transform: scale(1) translate(0, 0); opacity: 1; }
+}
+
+.animate-vibrate {
+  animation: vibrateText 0.6s cubic-bezier(0.36, 0.07, 0.19, 0.97) forwards;
+}
+
+/* 팝업 바운스 효과 (정답: 초록색 '맞아!') */
+@keyframes successPop {
+  0% { transform: scale(0.3) rotate(-6deg); opacity: 0; }
+  50% { transform: scale(1.22) rotate(3deg); opacity: 1; }
+  75% { transform: scale(0.95) rotate(-1deg); }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+.animate-successPop {
+  animation: successPop 0.55s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}

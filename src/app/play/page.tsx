@@ -15,6 +15,7 @@ import {
 import TypewriterText from "@/components/TypewriterText";
 import HintModal from "@/components/HintModal";
 import LightboxModal from "@/components/LightboxModal";
+import confetti from "canvas-confetti";
 
 interface PuzzleData {
   roomNumber: number;
@@ -46,6 +47,7 @@ export default function PlayPage() {
   const [isTypingFinished, setIsTypingFinished] = useState<boolean>(false);
   const [isRoomTransitioning, setIsRoomTransitioning] = useState<boolean>(false);
   const [isShaking, setIsShaking] = useState<boolean>(false);
+  const [answerFeedbackOverlay, setAnswerFeedbackOverlay] = useState<"correct" | "wrong" | null>(null);
 
   // Hint cooldown (2 minutes = 120s)
   const [hintCooldown, setHintCooldown] = useState<number>(120);
@@ -265,17 +267,31 @@ export default function PlayPage() {
 
       if (!res.ok || !data.success) {
         setIsShaking(true);
-        setTimeout(() => setIsShaking(false), 500);
+        setAnswerFeedbackOverlay("wrong");
         setFeedbackMsg({
           type: "error",
           text: data.message || "오답입니다! 단서를 다시 확인해보세요.",
         });
-        setIsSubmitting(false);
+        setTimeout(() => setIsShaking(false), 500);
+        setTimeout(() => {
+          setAnswerFeedbackOverlay(null);
+          setIsSubmitting(false);
+        }, 1200);
         return;
       }
 
       // Correct answer!
+      setAnswerFeedbackOverlay("correct");
       setFeedbackMsg({ type: "success", text: "정답입니다!" });
+
+      try {
+        confetti({
+          particleCount: 35,
+          spread: 70,
+          origin: { y: 0.5 },
+          colors: ["#10b981", "#34d399", "#6ee7b7", "#ffffff"],
+        });
+      } catch {}
 
       if (data.isCleared) {
         const now = Date.now();
@@ -304,30 +320,38 @@ export default function PlayPage() {
           console.warn("Storage save failed:", err);
         }
 
-        router.push("/clear");
-      } else {
-        // Room transition motion
-        setIsRoomTransitioning(true);
         setTimeout(() => {
-          // Reset room entered state for the new room
-          const now = Date.now();
-          roomEnteredAtRef.current = now;
-          lastHintAtRef.current = null;
-          setHintCooldown(120);
-          setCanUnlockNext(false);
-          setUnlockedHints([]);
-          setIsTypingFinished(false);
-          setAnswerInput("");
-          setFeedbackMsg(null);
-          setCurrentRoom(data.nextRoom);
-          setIsRoomTransitioning(false);
-          loadGameState(pin);
-        }, 500);
+          setAnswerFeedbackOverlay(null);
+          setIsSubmitting(false);
+          router.push("/clear");
+        }, 1200);
+      } else {
+        // Show "맞아!" for 1.1s, then proceed to room transition
+        setTimeout(() => {
+          setAnswerFeedbackOverlay(null);
+          setIsRoomTransitioning(true);
+          setTimeout(() => {
+            // Reset room entered state for the new room
+            const now = Date.now();
+            roomEnteredAtRef.current = now;
+            lastHintAtRef.current = null;
+            setHintCooldown(120);
+            setCanUnlockNext(false);
+            setUnlockedHints([]);
+            setIsTypingFinished(false);
+            setAnswerInput("");
+            setFeedbackMsg(null);
+            setCurrentRoom(data.nextRoom);
+            setIsRoomTransitioning(false);
+            loadGameState(pin);
+            setIsSubmitting(false);
+          }, 450);
+        }, 1100);
       }
     } catch {
-      setFeedbackMsg({ type: "error", text: "정답 제출 중 오류가 발생했습니다." });
-    } finally {
+      setAnswerFeedbackOverlay(null);
       setIsSubmitting(false);
+      setFeedbackMsg({ type: "error", text: "정답 제출 중 오류가 발생했습니다." });
     }
   };
 
@@ -502,6 +526,25 @@ export default function PlayPage() {
           </button>
         </form>
       </div>
+
+      {/* Central Answer Feedback Modal (화면 중간 검은 반투명 창: 빨간색 '아니야' / 초록색 '맞아!') */}
+      {answerFeedbackOverlay && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm pointer-events-none animate-fadeIn">
+          {answerFeedbackOverlay === "wrong" ? (
+            <div className="flex flex-col items-center justify-center px-12 py-9 rounded-3xl bg-black/85 border-2 border-red-500/80 shadow-[0_0_40px_rgba(239,68,68,0.45)]">
+              <span className="text-4xl sm:text-5xl font-black text-red-500 tracking-wider animate-vibrate drop-shadow-[0_0_20px_rgba(239,68,68,0.9)]">
+                아니야
+              </span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center px-12 py-9 rounded-3xl bg-black/85 border-2 border-emerald-500/80 shadow-[0_0_40px_rgba(16,185,129,0.45)]">
+              <span className="text-4xl sm:text-5xl font-black text-emerald-400 tracking-wider animate-successPop drop-shadow-[0_0_20px_rgba(16,185,129,0.9)]">
+                맞아!
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Lightbox Modal */}
       <LightboxModal
