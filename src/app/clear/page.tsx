@@ -356,43 +356,73 @@ export default function ClearPage() {
         </div>
 
         {/* Action Buttons */}
-        <div className="w-full space-y-2.5">
-          {/* 후기 남기기 버튼 (메인 화면으로 버튼 바로 위에 위치) */}
-          <button
-            type="button"
-            onClick={() => {
-              if (hasReviewed) {
-                alert("이미 후기를 등록해주셨습니다. 소중한 의견 감사합니다! ❤️");
-                return;
-              }
-              setIsReviewModalOpen(true);
-            }}
-            className={`w-full py-4 rounded-2xl font-black text-base shadow-xl flex items-center justify-center gap-2.5 transition active:scale-95 border ${
-              hasReviewed
-                ? "bg-stone-800/90 text-emerald-400 border-emerald-500/40 cursor-default"
-                : "bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 hover:from-amber-400 hover:to-amber-600 text-stone-950 border-amber-300/60 shadow-[0_0_20px_rgba(245,158,11,0.25)]"
-            }`}
-          >
-            {hasReviewed ? (
-              <>
-                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                <span>후기 작성 완료 ✓</span>
-              </>
-            ) : (
-              <>
-                <MessageSquarePlus className="w-5 h-5 fill-stone-950 text-stone-950" />
-                <span>사건 해결 후기 남기기</span>
-              </>
+        <div className="w-full space-y-3.5">
+          {/* 후기 남기기 유도 섹션 */}
+          <div className="relative w-full flex flex-col items-center">
+            {!hasReviewed && (
+              /* 통통 튀는 인터랙티브 유도 말풍선 배지 */
+              <div className="relative mb-2 animate-bounce z-10 cursor-pointer" onClick={() => setIsReviewModalOpen(true)}>
+                <div className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 text-stone-950 font-black text-[12px] shadow-[0_4px_15px_rgba(245,158,11,0.5)] border border-amber-200">
+                  <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                  <span>📸 10초 만에 인증샷 & 수사 후기 남기기!</span>
+                </div>
+                {/* 말풍선 꼬리 */}
+                <div className="w-0 h-0 border-x-4 border-x-transparent border-t-[5px] border-t-amber-500 mx-auto -mt-[1px]" />
+              </div>
             )}
-          </button>
+
+            {/* 후기 남기기 버튼 (매력적인 네온 글로우 & 펄스 효과) */}
+            <div className="relative w-full group">
+              {!hasReviewed && (
+                <div className="absolute -inset-1 rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-400 to-orange-500 opacity-80 blur-md group-hover:opacity-100 transition duration-300 animate-pulse" />
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (hasReviewed) {
+                    alert("이미 소중한 후기를 등록해주셨습니다! 감사합니다 ❤️");
+                    return;
+                  }
+                  setIsReviewModalOpen(true);
+                }}
+                className={`relative w-full py-4 px-5 rounded-2xl font-black text-base shadow-2xl flex items-center justify-center gap-2.5 transition active:scale-95 border ${
+                  hasReviewed
+                    ? "bg-stone-800/90 text-emerald-400 border-emerald-500/40 cursor-default"
+                    : "bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 hover:from-amber-300 hover:to-orange-400 text-stone-950 border-amber-200 shadow-[0_0_30px_rgba(245,158,11,0.6)]"
+                }`}
+              >
+                {hasReviewed ? (
+                  <>
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                    <span>수사 후기 작성 완료 ✓</span>
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-5 h-5 stroke-[2.5]" />
+                    <span className="tracking-tight text-stone-950 font-black text-[16px]">
+                      사건 해결 후기 남기기 ✍️
+                    </span>
+                    <Sparkles className="w-4 h-4 text-amber-950 animate-pulse ml-0.5" />
+                  </>
+                )}
+              </button>
+            </div>
+
+            {!hasReviewed && (
+              <p className="mt-2 text-[11px] text-amber-300/90 font-semibold flex items-center gap-1 drop-shadow">
+                <span>🏆 작성된 후기는 실시간 탐정 일지에 영구 보존됩니다!</span>
+              </p>
+            )}
+          </div>
 
           {/* 메인 화면으로 버튼 */}
           <button
             type="button"
             onClick={() => router.push("/")}
-            className="w-full py-3.5 rounded-2xl bg-stone-800/90 hover:bg-stone-750 text-stone-200 font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition active:scale-95 border border-stone-700/80"
+            className="w-full py-3.5 rounded-2xl bg-stone-800/90 hover:bg-stone-750 text-stone-300 font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition active:scale-95 border border-stone-700/80"
           >
-            <Home className="w-4 h-4 text-stone-300" />
+            <Home className="w-4 h-4 text-stone-400" />
             <span>메인 화면으로</span>
           </button>
         </div>
@@ -444,12 +474,12 @@ export default function ClearPage() {
                 />
               </div>
 
-              {/* 2. 사진 (선택 - 카메라 직접 연동) */}
+              {/* 2. 사진 (선택 - 전면 셀카 카메라 연동) */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-bold text-amber-300 flex items-center gap-1">
                     <Camera className="w-3.5 h-3.5 text-amber-400" />
-                    현장 인증 사진 <span className="text-stone-400 font-normal">(선택)</span>
+                    전면 셀카 인증 사진 <span className="text-stone-400 font-normal">(선택)</span>
                   </label>
                   {photoData && (
                     <button
@@ -463,12 +493,12 @@ export default function ClearPage() {
                   )}
                 </div>
 
-                {/* 숨겨진 파일 인풋: capture="environment"로 모바일 기기 카메라 즉시 구동 */}
+                {/* 숨겨진 파일 인풋: capture="user"로 모바일 기기 전면 카메라(셀카) 즉시 구동 */}
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
-                  capture="environment"
+                  capture="user"
                   onChange={handleImageCapture}
                   className="hidden"
                 />
@@ -477,7 +507,7 @@ export default function ClearPage() {
                   <div className="relative rounded-2xl overflow-hidden border border-amber-500/50 bg-stone-950 group">
                     <img
                       src={photoData}
-                      alt="촬영된 후기 사진"
+                      alt="촬영된 셀카 사진"
                       className="w-full h-44 object-cover"
                     />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2">
@@ -487,7 +517,7 @@ export default function ClearPage() {
                         className="px-3 py-1.5 rounded-lg bg-stone-900/90 text-xs font-bold text-stone-200 border border-stone-600 shadow flex items-center gap-1.5"
                       >
                         <Camera className="w-3.5 h-3.5" />
-                        다시 촬영하기
+                        셀카 다시 촬영하기
                       </button>
                     </div>
                   </div>
@@ -501,10 +531,10 @@ export default function ClearPage() {
                       <Camera className="w-5 h-5" />
                     </div>
                     <span className="text-xs font-bold text-stone-200">
-                      카메라 켜기 / 사진 촬영하기
+                      전면 카메라 켜기 (인증 셀카 촬영) 🤳
                     </span>
                     <span className="text-[10px] text-stone-500">
-                      버튼을 누르면 카메라가 실행됩니다
+                      버튼을 누르면 전면(셀피) 카메라가 실행됩니다
                     </span>
                   </button>
                 )}
