@@ -54,21 +54,37 @@ export default function TypewriterText({
     onCompleteRef.current();
   };
 
+  const lines = displayedText.split("\n");
+
   return (
     <div
       onClick={handleSkip}
-      className={`cursor-pointer transition-all select-none relative ${className}`}
+      className={`cursor-pointer transition-all select-none relative text-center ${className}`}
       title="터치하여 대사 즉시 완료"
     >
-      {/* 50% larger font size (text-xl instead of text-sm) */}
-      <p className="whitespace-pre-line leading-relaxed font-bold text-lg sm:text-xl text-stone-100 tracking-wide drop-shadow-sm">
-        {displayedText}
-        {!isFinished && (
-          <span className="inline-block w-2.5 h-5 ml-1.5 bg-amber-400 animate-pulse align-middle" />
-        )}
-      </p>
+      <div className="leading-relaxed text-center tracking-wide drop-shadow-sm space-y-1">
+        {lines.map((line, idx) => {
+          const isTargetSubtle =
+            line.includes("내 이름") || line.includes("눈치챘지");
+          return (
+            <p
+              key={idx}
+              className={`${
+                isTargetSubtle
+                  ? "text-stone-400 text-sm sm:text-base font-medium opacity-70 pt-2"
+                  : "text-stone-100 text-lg sm:text-xl font-bold"
+              }`}
+            >
+              {line}
+              {idx === lines.length - 1 && !isFinished && (
+                <span className="inline-block w-2.5 h-4 ml-1 bg-amber-400 animate-pulse align-middle" />
+              )}
+            </p>
+          );
+        })}
+      </div>
       {!isFinished && (
-        <span className="text-xs text-amber-300/80 block mt-3 font-mono text-right">
+        <span className="text-xs text-amber-300/80 block mt-3 font-mono text-center">
           (화면을 터치하면 대사를 바로 건너뜁니다)
         </span>
       )}

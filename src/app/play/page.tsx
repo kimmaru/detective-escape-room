@@ -397,8 +397,8 @@ export default function PlayPage() {
       >
         {/* Step 1: Upper Detective Dialogue Speech Box */}
         <section className="relative mb-4">
-          <div className="p-5 rounded-2xl bg-[#231d19] border-2 border-amber-700/50 shadow-xl relative">
-            <div className="flex items-center gap-2 mb-3 text-amber-400 text-xs font-bold tracking-wider">
+          <div className="p-5 rounded-2xl bg-[#231d19] border-2 border-amber-700/50 shadow-xl relative text-center">
+            <div className="flex items-center justify-center gap-2 mb-3 text-amber-400 text-xs font-bold tracking-wider">
               <span className="px-2 py-0.5 rounded bg-amber-900/60 border border-amber-700/50 text-[10px]">
                 Q{currentRoom}
               </span>
@@ -410,6 +410,7 @@ export default function PlayPage() {
               text={puzzle.dialogue}
               speed={35}
               onComplete={handleTypingComplete}
+              className="text-center"
             />
           </div>
         </section>
@@ -492,9 +493,9 @@ export default function PlayPage() {
               }`}
             />
             {unlockedHints.length > 0 ? (
-              <span>💡 단서 수첩 ({unlockedHints.length}개 확인)</span>
+              <span>단서 수첩 ({unlockedHints.length}개 확인)</span>
             ) : hintCooldown === 0 ? (
-              <span>💡 단서 힌트 열람</span>
+              <span>단서 힌트 열람</span>
             ) : (
               <span>단서 힌트 ({hintCooldown}초 후)</span>
             )}

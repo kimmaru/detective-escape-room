@@ -3,12 +3,13 @@
 import React, { useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { Award, Clock, RotateCcw, Home, Sparkles, CheckCircle2, Lightbulb } from "lucide-react";
+import { Award, Clock, RotateCcw, Home, Sparkles, CheckCircle2, Lightbulb, Gift, X } from "lucide-react";
 import confetti from "canvas-confetti";
 
 export default function ClearPage() {
   const router = useRouter();
   const [session, setSession] = useState<any>(null);
+  const [isRewardOpen, setIsRewardOpen] = useState(false);
 
   useEffect(() => {
     let activePin = "";
@@ -71,6 +72,18 @@ export default function ClearPage() {
     frame();
   }, []);
 
+  const handleOpenReward = () => {
+    setIsRewardOpen(true);
+    try {
+      confetti({
+        particleCount: 50,
+        spread: 90,
+        origin: { y: 0.5 },
+        colors: ["#f59e0b", "#d97706", "#fbbf24", "#ffffff", "#10b981"],
+      });
+    } catch {}
+  };
+
   const formatTotalTime = (seconds: number) => {
     let effectiveSeconds = seconds;
     if (!effectiveSeconds || effectiveSeconds <= 0) {
@@ -94,30 +107,34 @@ export default function ClearPage() {
 
   return (
     <div className="relative flex flex-col flex-1 min-h-[100dvh] bg-[#161311] text-stone-100 select-none overflow-hidden">
-      {/* Background medal watermark */}
+      {/* Background watermark */}
       <div className="absolute inset-0 z-0">
         <Image
-          src="/images/clear.png"
-          alt="클리어 축하"
+          src="/images/Clear_Background.png"
+          alt="클리어 배경"
           fill
           priority
-          className="object-cover object-center opacity-25"
+          className="object-cover object-center opacity-30"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[#141110] via-[#141110]/80 to-[#141110]/60" />
       </div>
 
       <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-6 text-center max-w-sm mx-auto w-full">
-        {/* Medal Icon Badge */}
+        {/* Interactive Gift Box Badge (Requested: 선물상자 아이콘 클릭 시 전체화면 Clear 이미지 등장) */}
         <div className="relative mb-6">
-          <div className="w-32 h-32 relative mx-auto drop-shadow-2xl animate-fadeIn">
-            <Image
-              src="/images/clear.png"
-              alt="메달"
-              fill
-              className="object-contain"
-            />
-          </div>
-          <Sparkles className="w-7 h-7 text-amber-400 absolute -top-1 -right-1 animate-bounce" />
+          <button
+            type="button"
+            onClick={handleOpenReward}
+            className="group relative p-6 rounded-3xl bg-gradient-to-b from-amber-500/20 to-amber-900/40 border-2 border-amber-400/70 shadow-[0_0_35px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 transition duration-300 animate-pulseGlow cursor-pointer flex flex-col items-center gap-2.5 mx-auto"
+          >
+            <div className="relative">
+              <Gift className="w-20 h-20 text-amber-400 group-hover:rotate-6 transition duration-300 drop-shadow-[0_0_18px_rgba(251,191,36,0.9)]" />
+              <Sparkles className="w-7 h-7 text-amber-300 absolute -top-2 -right-2 animate-bounce" />
+            </div>
+            <span className="text-xs font-black tracking-wider text-amber-300 bg-amber-950/90 px-3.5 py-1 rounded-full border border-amber-400/60 shadow animate-bounce">
+              🎁 선물상자를 터치하여 보상 열기!
+            </span>
+          </button>
         </div>
 
         {/* Celebration Title */}
@@ -175,14 +192,62 @@ export default function ClearPage() {
         {/* Action Buttons */}
         <div className="w-full space-y-3">
           <button
-            onClick={() => router.push("/")}
-            className="w-full py-4 rounded-2xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-black text-base shadow-xl flex items-center justify-center gap-2 transition active:scale-95 border border-amber-300/40"
+            onClick={handleOpenReward}
+            className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black text-base shadow-xl flex items-center justify-center gap-2 transition active:scale-95 border border-amber-300/40"
           >
-            <Home className="w-5 h-5 fill-stone-950" />
+            <Gift className="w-5 h-5" />
+            <span>🎁 사건 해결 보상 다시 보기</span>
+          </button>
+
+          <button
+            onClick={() => router.push("/")}
+            className="w-full py-3.5 rounded-2xl bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition active:scale-95 border border-stone-700"
+          >
+            <Home className="w-4 h-4" />
             <span>메인 화면으로</span>
           </button>
         </div>
       </div>
+
+      {/* Fullscreen Clear Image "짜잔!" Modal (선물상자 클릭 시 등장) */}
+      {isRewardOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/95 backdrop-blur-md animate-fadeIn">
+          <div className="relative max-w-lg w-full h-[90vh] flex flex-col items-center justify-between">
+            {/* Top Close Button */}
+            <div className="w-full flex items-center justify-between pb-2 text-stone-300">
+              <span className="text-xs font-mono font-bold text-amber-400 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4" />
+                <span>SPECIAL CLEAR REWARD</span>
+              </span>
+              <button
+                onClick={() => setIsRewardOpen(false)}
+                className="p-1.5 rounded-full bg-stone-900/90 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-700 shadow-xl transition"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Clear Image with Pop Animation */}
+            <div className="relative w-full flex-1 rounded-2xl overflow-hidden border-2 border-amber-500/60 shadow-[0_0_50px_rgba(245,158,11,0.4)] animate-successPop bg-[#181310] flex items-center justify-center">
+              <Image
+                src="/images/clear.png"
+                alt="사건 해결 특별 보상"
+                fill
+                priority
+                className="object-contain"
+              />
+            </div>
+
+            {/* Bottom Close Button */}
+            <button
+              onClick={() => setIsRewardOpen(false)}
+              className="mt-3.5 w-full py-3.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 text-sm font-black shadow-lg transition active:scale-95"
+            >
+              확인 완료 (닫기)
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
