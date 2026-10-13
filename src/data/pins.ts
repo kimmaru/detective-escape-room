@@ -1,6 +1,13 @@
 import fs from "fs";
 import path from "path";
 
+export interface ReviewData {
+  name: string;
+  content: string;
+  photo?: string | null;
+  createdAt: number;
+}
+
 export interface PlayerSession {
   pin: string; // 6-character code
   nickname: string;
@@ -15,6 +22,8 @@ export interface PlayerSession {
   totalHintsUsed: number;
   lastActiveAt: number | null;
   status: "ready" | "playing" | "cleared" | "inactive";
+  hasReviewed?: boolean;
+  review?: ReviewData;
 }
 
 export function generateDefaultPins(): Record<string, PlayerSession> {

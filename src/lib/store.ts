@@ -1,9 +1,33 @@
 import fs from "fs";
 import path from "path";
-import { PlayerSession, generateDefaultPins } from "../data/pins";
+import { PlayerSession, ReviewData, generateDefaultPins } from "../data/pins";
 import { PUZZLES } from "../data/puzzles";
 
 const CACHE_FILE = path.join("/tmp", "escaperoom_sessions.json");
+const REVIEWS_FILE = path.join("/tmp", "escaperoom_reviews.json");
+
+export function getAllReviews(): Array<ReviewData & { pin: string }> {
+  try {
+    if (fs.existsSync(REVIEWS_FILE)) {
+      const data = fs.readFileSync(REVIEWS_FILE, "utf-8");
+      return JSON.parse(data);
+    }
+  } catch (e) {
+    console.error("Failed to load reviews from /tmp:", e);
+  }
+  return [];
+}
+
+function saveReviewToCache(reviewWithPin: ReviewData & { pin: string }) {
+  try {
+    const list = getAllReviews();
+    const filtered = list.filter((r) => r.pin !== reviewWithPin.pin);
+    filtered.push(reviewWithPin);
+    fs.writeFileSync(REVIEWS_FILE, JSON.stringify(filtered, null, 2));
+  } catch (e) {
+    console.error("Failed to save review to /tmp:", e);
+  }
+}
 
 interface GlobalStore {
   sessions: Record<string, PlayerSession>;
@@ -130,6 +154,12 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
   }
   if (clientState.unlockedHints && clientState.unlockedHints.length >= session.unlockedHints.length) {
     session.unlockedHints = clientState.unlockedHints;
+  }
+  if (clientState.hasReviewed) {
+    session.hasReviewed = true;
+    if (clientState.review) {
+      session.review = clientState.review;
+    }
   }
 
   session.lastActiveAt = now;
@@ -336,4 +366,58 @@ export function resetSession(pin?: string) {
     store.sessions = generateDefaultPins();
   }
   savePersistedSessions(store.sessions);
+}
+
+export function submitReview(
+  pin: string,
+  reviewInput: { name: string; content: string; photo?: string | null }
+): {
+  success: boolean;
+  message: string;
+  review?: ReviewData;
+  session?: PlayerSession;
+} {
+  const cleanPin = pin.trim().toUpperCase();
+  const session = getSession(cleanPin);
+  if (!session) {
+    return { success: false, message: "세션을 찾을 수 없습니다." };
+  }
+
+  if (session.hasReviewed) {
+    return { success: false, message: "이미 후기를 등록하셨습니다. (1인 1회 제한)" };
+  }
+
+  const name = reviewInput.name?.trim();
+  const content = reviewInput.content?.trim();
+
+  if (!name) {
+    return { success: false, message: "작성자 이름을 입력해주세요." };
+  }
+  if (!content || content.length < 2) {
+    return { success: false, message: "후기 내용을 최소 2자 이상 작성해주세요." };
+  }
+
+  const now = Date.now();
+  const review: ReviewData = {
+    name,
+    content,
+    photo: reviewInput.photo || null,
+    createdAt: now,
+  };
+
+  session.hasReviewed = true;
+  session.review = review;
+  session.lastActiveAt = now;
+
+  const store = getStore();
+  store.sessions[cleanPin] = session;
+  savePersistedSessions(store.sessions);
+  saveReviewToCache({ ...review, pin: cleanPin });
+
+  return {
+    success: true,
+    message: "소중한 후기가 성공적으로 등록되었습니다!",
+    review,
+    session,
+  };
 }
