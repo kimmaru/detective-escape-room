@@ -75,9 +75,26 @@ export function getAllSessions(): PlayerSession[] {
   return Object.values(store.sessions);
 }
 
+export function resolvePin(input: string): string {
+  const clean = input.trim().toUpperCase();
+  const store = getStore();
+  if (store.sessions[clean]) return clean;
+
+  // 숫자 또는 번호 입력 지원 (예: "100", "100번", "1")
+  const num = parseInt(clean.replace(/[^0-9]/g, ""), 10);
+  if (!isNaN(num) && num >= 1 && num <= 100) {
+    const padded = String(num).padStart(2, "0");
+    const found = Object.values(store.sessions).find(
+      (s) => s.nickname.endsWith(`_${num}`) || s.nickname.endsWith(`_${padded}`)
+    );
+    if (found) return found.pin;
+  }
+  return clean;
+}
+
 export function getSession(pin: string): PlayerSession | null {
   const store = getStore();
-  const cleanPin = pin.trim().toUpperCase();
+  const cleanPin = resolvePin(pin);
 
   // If session doesn't exist, check defaultPins reload
   if (!store.sessions[cleanPin]) {
@@ -94,7 +111,7 @@ export function getSession(pin: string): PlayerSession | null {
 }
 
 export function startOrResumeSession(pin: string, customNickname?: string): PlayerSession {
-  const cleanPin = pin.trim().toUpperCase();
+  const cleanPin = resolvePin(pin);
   const session = getSession(cleanPin);
   if (!session) {
     throw new Error("유효하지 않은 수사 암호입니다. 암호를 다시 확인해주세요.");
@@ -122,7 +139,7 @@ export function startOrResumeSession(pin: string, customNickname?: string): Play
 
 export function syncClientSession(clientState: Partial<PlayerSession> & { pin: string }): PlayerSession {
   const store = getStore();
-  const pin = clientState.pin.trim().toUpperCase();
+  const pin = resolvePin(clientState.pin);
   let session = store.sessions[pin];
 
   if (!session) {
@@ -181,7 +198,7 @@ export function submitAnswer(
   totalHintsUsed?: number;
   session?: PlayerSession;
 } {
-  const cleanPin = pin.trim().toUpperCase();
+  const cleanPin = resolvePin(pin);
   const session = getSession(cleanPin);
   if (!session) {
     return { success: false, message: "세션을 찾을 수 없습니다." };
@@ -261,7 +278,7 @@ export function unlockHint(
   message?: string;
   remainingCooldown?: number;
 } {
-  const cleanPin = pin.trim().toUpperCase();
+  const cleanPin = resolvePin(pin);
   const session = getSession(cleanPin);
   if (!session) {
     return { success: false, message: "세션을 찾을 수 없습니다." };
@@ -315,7 +332,7 @@ export function unlockHint(
 }
 
 export function passRoomAdmin(pin: string): { success: boolean; nextRoom?: number; isCleared?: boolean } {
-  const cleanPin = pin.trim().toUpperCase();
+  const cleanPin = resolvePin(pin);
   const session = getSession(cleanPin);
   if (!session) return { success: false };
 
@@ -344,7 +361,7 @@ export function passRoomAdmin(pin: string): { success: boolean; nextRoom?: numbe
 export function resetSession(pin?: string) {
   const store = getStore();
   if (pin) {
-    const cleanPin = pin.trim().toUpperCase();
+    const cleanPin = resolvePin(pin);
     if (store.sessions[cleanPin]) {
       store.sessions[cleanPin] = {
         pin: cleanPin,
@@ -377,7 +394,7 @@ export function submitReview(
   review?: ReviewData;
   session?: PlayerSession;
 } {
-  const cleanPin = pin.trim().toUpperCase();
+  const cleanPin = resolvePin(pin);
   const session = getSession(cleanPin);
   if (!session) {
     return { success: false, message: "세션을 찾을 수 없습니다." };

@@ -287,7 +287,7 @@ export default function ClearPage() {
   }
 
   return (
-    <div className="relative flex flex-col flex-1 min-h-[100dvh] bg-[#161311] text-stone-100 select-none overflow-hidden">
+    <div className="relative flex flex-col flex-1 min-h-[100dvh] max-w-md mx-auto w-full bg-[#161311] text-stone-100 select-none overflow-hidden shadow-2xl">
       {/* Background watermark */}
       <div className="absolute inset-0 z-0">
         <Image

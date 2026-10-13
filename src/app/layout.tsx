@@ -25,9 +25,7 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body className="min-h-screen bg-[#141110] text-[#2c221e] antialiased">
-        <main className="mx-auto min-h-[100dvh] max-w-md w-full relative flex flex-col shadow-2xl">
-          {children}
-        </main>
+        {children}
       </body>
     </html>
   );

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { passRoomAdmin, resetSession } from "@/lib/store";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   try {
     const { action, pin, adminKey } = await req.json();

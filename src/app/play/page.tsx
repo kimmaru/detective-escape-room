@@ -373,7 +373,7 @@ export default function PlayPage() {
   }
 
   return (
-    <div className="relative flex flex-col flex-1 min-h-[100dvh] bg-[#161311] text-stone-100 overflow-x-hidden">
+    <div className="relative flex flex-col flex-1 min-h-[100dvh] max-w-md mx-auto w-full bg-[#161311] text-stone-100 overflow-x-hidden shadow-2xl">
       {/* Top Header Bar */}
       <header className="sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-[#1e1916]/95 border-b border-stone-800/80 backdrop-blur-md shadow-md">
         <div className="flex items-center gap-2">

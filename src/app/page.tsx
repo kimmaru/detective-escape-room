@@ -91,7 +91,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="relative flex flex-col flex-1 min-h-[100dvh] bg-[#1a1614] text-stone-100 overflow-hidden select-none">
+    <div className="relative flex flex-col flex-1 min-h-[100dvh] max-w-md mx-auto w-full bg-[#1a1614] text-stone-100 overflow-hidden select-none shadow-2xl">
       {/* Background Cover Image with darkening gradient */}
       <div className="absolute inset-0 z-0">
         <Image

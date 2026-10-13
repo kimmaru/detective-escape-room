@@ -60,7 +60,9 @@ export default function AdminPage() {
   const fetchStats = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/admin/stats");
+      const res = await fetch(`/api/admin/stats?t=${Date.now()}`, {
+        cache: "no-store",
+      });
       const data = await res.json();
       setStats(data);
     } catch (e) {
