@@ -10,18 +10,29 @@ export default function ClearPage() {
   const router = useRouter();
   const [session, setSession] = useState<any>(null);
   const [isRewardOpen, setIsRewardOpen] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
 
   useEffect(() => {
     let activePin = "";
     try {
       const saved = localStorage.getItem("escape_session");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setSession(parsed);
-        if (parsed.pin) activePin = parsed.pin;
+      if (!saved) {
+        router.replace("/");
+        return;
       }
+      const parsed = JSON.parse(saved);
+      if (!parsed.pin || (!parsed.isCleared && parsed.currentRoom <= 10)) {
+        // Not authenticated or not cleared yet -> redirect to home
+        router.replace("/");
+        return;
+      }
+      setSession(parsed);
+      activePin = parsed.pin;
+      setIsAuthChecking(false);
     } catch (e) {
       console.warn("Storage read failed:", e);
+      router.replace("/");
+      return;
     }
 
     // Sync latest state from server to guarantee totalTimeSeconds and totalHintsUsed
@@ -104,6 +115,15 @@ export default function ClearPage() {
     }
     return `${secs}초`;
   };
+
+  if (isAuthChecking) {
+    return (
+      <div className="flex-1 min-h-[100dvh] flex flex-col items-center justify-center p-6 text-stone-300 bg-[#161311]">
+        <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-sm font-mono text-stone-400">수사 기록 확인 중...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex flex-col flex-1 min-h-[100dvh] bg-[#161311] text-stone-100 select-none overflow-hidden">

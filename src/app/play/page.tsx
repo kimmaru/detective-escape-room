@@ -140,12 +140,18 @@ export default function PlayPage() {
     try {
       const saved = localStorage.getItem("escape_session");
       if (!saved) {
-        router.push("/");
+        router.replace("/");
         return;
       }
       const parsed = JSON.parse(saved);
       if (!parsed.pin) {
-        router.push("/");
+        router.replace("/");
+        return;
+      }
+
+      // If user has already cleared all puzzles, redirect to clear page
+      if (parsed.isCleared || (parsed.currentRoom && parsed.currentRoom > 10)) {
+        router.replace("/clear");
         return;
       }
 
@@ -161,7 +167,7 @@ export default function PlayPage() {
 
       loadGameState(parsed.pin);
     } catch {
-      router.push("/");
+      router.replace("/");
     }
   }, [loadGameState, router]);
 
@@ -535,7 +541,7 @@ export default function PlayPage() {
         </form>
       </div>
 
-      {/* Central Answer Feedback Modal (화면 중간 검은 반투명 창: 빨간색 '아니야' / 초록색 '맞아!') */}
+      {/* Central Answer Feedback Modal (화면 중간 검은 반투명 창: 빨간색 '아니야' / 초록색 '맞았어!') */}
       {answerFeedbackOverlay && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm pointer-events-none animate-fadeIn">
           {answerFeedbackOverlay === "wrong" ? (
@@ -547,7 +553,7 @@ export default function PlayPage() {
           ) : (
             <div className="flex flex-col items-center justify-center px-12 py-9 rounded-3xl bg-black/85 border-2 border-emerald-500/80 shadow-[0_0_40px_rgba(16,185,129,0.45)]">
               <span className="text-4xl sm:text-5xl font-black text-emerald-400 tracking-wider animate-successPop drop-shadow-[0_0_20px_rgba(16,185,129,0.9)]">
-                맞아!
+                맞았어!
               </span>
             </div>
           )}

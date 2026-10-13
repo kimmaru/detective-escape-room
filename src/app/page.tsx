@@ -21,6 +21,9 @@ export default function HomePage() {
       if (saved) {
         const parsed = JSON.parse(saved);
         setExistingSession(parsed);
+        if (parsed.pin) {
+          document.cookie = `escape_auth=${parsed.pin}; path=/; max-age=604800; SameSite=Lax`;
+        }
       }
 
       const urlParams = new URLSearchParams(window.location.search);
@@ -53,6 +56,7 @@ export default function HomePage() {
 
       // Save session in localStorage
       localStorage.setItem("escape_session", JSON.stringify(data.session));
+      document.cookie = `escape_auth=${cleanCode}; path=/; max-age=604800; SameSite=Lax`;
       setIsModalOpen(false);
 
       if (data.session.isCleared) {
@@ -67,8 +71,9 @@ export default function HomePage() {
   };
 
   const handleResume = () => {
-    if (existingSession) {
-      if (existingSession.isCleared) {
+    if (existingSession && existingSession.pin) {
+      document.cookie = `escape_auth=${existingSession.pin}; path=/; max-age=604800; SameSite=Lax`;
+      if (existingSession.isCleared || existingSession.currentRoom > 10) {
         router.push("/clear");
       } else {
         router.push("/play");
@@ -141,7 +146,11 @@ export default function HomePage() {
               onClick={handleResume}
               className="w-full py-3.5 px-6 rounded-2xl bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center gap-2 border border-stone-600 transition shadow-lg"
             >
-              <span>이어서 수사하기 (Room {existingSession.currentRoom})</span>
+              <span>
+                {existingSession.isCleared || existingSession.currentRoom > 10
+                  ? "이어서 수사하기 (CLEAR)"
+                  : `이어서 수사하기 (Room ${existingSession.currentRoom})`}
+              </span>
               <ArrowRight className="w-4 h-4 text-amber-400" />
             </button>
           )}
