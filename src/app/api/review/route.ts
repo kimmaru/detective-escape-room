@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { submitReview, getSession, getAllReviews } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,17 +21,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { success: false, message: "유효하지 않은 수사 암호입니다." },
         { status: 404 }
-      );
-    }
-
-    if (session.hasReviewed) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "이미 후기를 등록하셨습니다. (1인 1회 제한)",
-          review: session.review,
-        },
-        { status: 409 }
       );
     }
 
@@ -66,21 +56,25 @@ export async function POST(req: NextRequest) {
       process.env.GOOGLE_SHEET_WEBHOOK_URL ||
       "https://script.google.com/macros/s/AKfycbxKY3sFsMUaUN2fuYFXLcSDrzlc7SC7PcBxZtHBWa0YRkoUg-bCJVTrCYouFnuLMqu9-w/exec";
     if (googleSheetUrl) {
-      // 비동기로 구글 스프레드시트에 전송 (응답 지연 방지)
-      fetch(googleSheetUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pin,
-          name,
-          content,
-          photo: photo || null,
-          createdAt: new Date().toISOString(),
-        }),
-        redirect: "follow",
-      }).catch((sheetErr) => {
+      try {
+        console.log(`Forwarding review for PIN ${pin} to Google Sheets...`);
+        const sheetRes = await fetch(googleSheetUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pin,
+            name,
+            content,
+            photo: photo || null,
+            createdAt: new Date().toISOString(),
+          }),
+          redirect: "follow",
+        });
+        const sheetData = await sheetRes.text();
+        console.log("Google Sheets response:", sheetData);
+      } catch (sheetErr) {
         console.error("Failed to forward review to Google Sheets:", sheetErr);
-      });
+      }
     }
 
     return NextResponse.json({

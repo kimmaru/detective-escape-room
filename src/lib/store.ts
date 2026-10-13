@@ -383,10 +383,6 @@ export function submitReview(
     return { success: false, message: "세션을 찾을 수 없습니다." };
   }
 
-  if (session.hasReviewed) {
-    return { success: false, message: "이미 후기를 등록하셨습니다. (1인 1회 제한)" };
-  }
-
   const name = reviewInput.name?.trim();
   const content = reviewInput.content?.trim();
 
