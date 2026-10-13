@@ -61,8 +61,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // [향후 외부 저장소 연동 확장 포인트]
-    // 예: Google Sheets Webhook, Notion API, Discord Webhook 등을 이곳에서 비동기 호출 가능
+    // [Google Sheets Webhook 연동]
+    const googleSheetUrl =
+      process.env.GOOGLE_SHEET_WEBHOOK_URL ||
+      "https://script.google.com/macros/s/AKfycbxKY3sFsMUaUN2fuYFXLcSDrzlc7SC7PcBxZtHBWa0YRkoUg-bCJVTrCYouFnuLMqu9-w/exec";
+    if (googleSheetUrl) {
+      // 비동기로 구글 스프레드시트에 전송 (응답 지연 방지)
+      fetch(googleSheetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pin,
+          name,
+          content,
+          photo: photo || null,
+          createdAt: new Date().toISOString(),
+        }),
+        redirect: "follow",
+      }).catch((sheetErr) => {
+        console.error("Failed to forward review to Google Sheets:", sheetErr);
+      });
+    }
 
     return NextResponse.json({
       success: true,
