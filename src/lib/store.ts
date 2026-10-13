@@ -237,8 +237,8 @@ export function unlockHint(
     return { success: false, message: "이 방의 모든 힌트와 정답을 이미 열람했습니다." };
   }
 
-  // 1-minute (60s) cooldown
-  const COOLDOWN_MS = 60 * 1000;
+  // 2-minute (120s) cooldown
+  const COOLDOWN_MS = 120 * 1000;
   const timeSinceLastEvent = now - lastHintAt;
 
   if (timeSinceLastEvent < COOLDOWN_MS) {

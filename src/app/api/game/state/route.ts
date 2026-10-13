@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   const now = Date.now();
   const baseTime = session.lastHintUnlockedAt || session.roomEnteredAt || session.startedAt || now;
   const timeSinceLast = now - baseTime;
-  const COOLDOWN_MS = 60 * 1000;
+  const COOLDOWN_MS = 120 * 1000;
   const remainingCooldown = Math.max(0, Math.ceil((COOLDOWN_MS - timeSinceLast) / 1000));
 
   // Build unlocked hints list

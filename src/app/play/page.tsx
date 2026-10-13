@@ -46,8 +46,8 @@ export default function PlayPage() {
   const [isRoomTransitioning, setIsRoomTransitioning] = useState<boolean>(false);
   const [isShaking, setIsShaking] = useState<boolean>(false);
 
-  // Hint cooldown
-  const [hintCooldown, setHintCooldown] = useState<number>(60);
+  // Hint cooldown (2 minutes = 120s)
+  const [hintCooldown, setHintCooldown] = useState<number>(120);
   const [canUnlockNext, setCanUnlockNext] = useState<boolean>(false);
 
   // Modals
@@ -66,7 +66,7 @@ export default function PlayPage() {
   const roomEnteredAtRef = useRef<number>(Date.now());
   const lastHintAtRef = useRef<number | null>(null);
 
-  // Cooldown countdown timer (strictly 60s per step)
+  // Cooldown countdown timer (strictly 120s per step)
   useEffect(() => {
     const timer = setInterval(() => {
       if (startedAtRef.current) {
@@ -75,7 +75,7 @@ export default function PlayPage() {
 
       const baseTime = lastHintAtRef.current || roomEnteredAtRef.current;
       const elapsedSinceBase = Math.floor((Date.now() - baseTime) / 1000);
-      const remaining = Math.max(0, 60 - elapsedSinceBase);
+      const remaining = Math.max(0, 120 - elapsedSinceBase);
       setHintCooldown(remaining);
       setCanUnlockNext(remaining === 0 && (puzzle ? unlockedHints.length < puzzle.totalHints : false));
     }, 1000);
@@ -114,10 +114,10 @@ export default function PlayPage() {
       if (s.roomEnteredAt) roomEnteredAtRef.current = s.roomEnteredAt;
       if (s.lastHintUnlockedAt) lastHintAtRef.current = s.lastHintUnlockedAt;
 
-      // Update cooldown based on server data
+      // Update cooldown based on server data (120s = 2 min)
       const base = s.lastHintUnlockedAt || s.roomEnteredAt || Date.now();
       const elapsed = Math.floor((Date.now() - base) / 1000);
-      const rem = Math.max(0, 60 - elapsed);
+      const rem = Math.max(0, 120 - elapsed);
       setHintCooldown(rem);
       setCanUnlockNext(rem === 0 && (data.puzzle ? (data.unlockedHints || []).length < data.puzzle.totalHints : false));
 
@@ -219,7 +219,7 @@ export default function PlayPage() {
       };
       setUnlockedHints((prev) => [...prev, newHintItem]);
       lastHintAtRef.current = Date.now();
-      setHintCooldown(60);
+      setHintCooldown(120);
       setCanUnlockNext(false);
       setIsHintModalOpen(true);
     } catch {
@@ -269,7 +269,7 @@ export default function PlayPage() {
           const now = Date.now();
           roomEnteredAtRef.current = now;
           lastHintAtRef.current = null;
-          setHintCooldown(60);
+          setHintCooldown(120);
           setCanUnlockNext(false);
           setUnlockedHints([]);
           setIsTypingFinished(false);
