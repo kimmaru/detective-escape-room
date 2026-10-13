@@ -211,7 +211,7 @@ export default function PlayPage() {
       const res = await fetch("/api/game/hint", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
+        body: JSON.stringify({ pin, roomNumber: currentRoom }),
       });
       const data = await res.json();
 
@@ -254,7 +254,7 @@ export default function PlayPage() {
       const res = await fetch("/api/game/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin, answer: answerInput }),
+        body: JSON.stringify({ pin, answer: answerInput, roomNumber: currentRoom }),
       });
       const data = await res.json();
 

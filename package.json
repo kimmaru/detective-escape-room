@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@vercel/blob": "^2.8.1",
     "canvas-confetti": "^1.9.3",
     "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.453.0",

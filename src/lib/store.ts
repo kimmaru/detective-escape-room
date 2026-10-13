@@ -7,6 +7,7 @@ const CACHE_FILE = path.join("/tmp", "escaperoom_sessions.json");
 
 interface GlobalStore {
   sessions: Record<string, PlayerSession>;
+  lastBlobSync: number;
 }
 
 declare global {
@@ -38,6 +39,7 @@ function getStore(): GlobalStore {
   if (!globalThis.__escapeStore) {
     globalThis.__escapeStore = {
       sessions: loadPersistedSessions(),
+      lastBlobSync: 0,
     };
   }
   return globalThis.__escapeStore;
@@ -52,7 +54,6 @@ export function getSession(pin: string): PlayerSession | null {
   const store = getStore();
   const cleanPin = pin.trim();
   if (!store.sessions[cleanPin]) {
-    // If PIN is valid format (1001~1100 or numeric 4 digits), dynamically create if not exists
     if (/^\d{4}$/.test(cleanPin)) {
       const num = parseInt(cleanPin, 10);
       const pad = String(num % 100 || 1).padStart(2, "0");
@@ -114,12 +115,9 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
   }
 
   const now = Date.now();
-  // Merge state carefully preferring more advanced progress
-  if (clientState.currentRoom && clientState.currentRoom > session.currentRoom) {
+  if (clientState.currentRoom && clientState.currentRoom >= session.currentRoom) {
     session.currentRoom = clientState.currentRoom;
     session.roomEnteredAt = clientState.roomEnteredAt || now;
-    session.unlockedHints = clientState.unlockedHints || [];
-    session.lastHintUnlockedAt = clientState.lastHintUnlockedAt || null;
   }
   if (clientState.isCleared) {
     session.isCleared = true;
@@ -127,13 +125,13 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
     session.status = "cleared";
     session.totalTimeSeconds = clientState.totalTimeSeconds || session.totalTimeSeconds;
   }
-  if (clientState.startedAt && !session.startedAt) {
+  if (clientState.startedAt) {
     session.startedAt = clientState.startedAt;
   }
   if (clientState.nickname) {
     session.nickname = clientState.nickname;
   }
-  if (clientState.unlockedHints && clientState.unlockedHints.length > session.unlockedHints.length) {
+  if (clientState.unlockedHints && clientState.unlockedHints.length >= session.unlockedHints.length) {
     session.unlockedHints = clientState.unlockedHints;
   }
 
@@ -143,7 +141,11 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
   return session;
 }
 
-export function submitAnswer(pin: string, rawAnswer: string): {
+export function submitAnswer(
+  pin: string,
+  rawAnswer: string,
+  clientCurrentRoom?: number
+): {
   success: boolean;
   nextRoom?: number;
   isCleared?: boolean;
@@ -155,16 +157,19 @@ export function submitAnswer(pin: string, rawAnswer: string): {
     return { success: false, message: "세션을 찾을 수 없습니다." };
   }
 
-  if (session.isCleared) {
+  // Use client's current room if provided, otherwise session's
+  const roomToValidate = clientCurrentRoom || session.currentRoom;
+
+  if (session.isCleared || roomToValidate > 10) {
     return { success: true, isCleared: true, message: "이미 모든 방을 클리어했습니다!" };
   }
 
-  const currentPuzzle = PUZZLES.find((p) => p.roomNumber === session.currentRoom);
+  const currentPuzzle = PUZZLES.find((p) => p.roomNumber === roomToValidate);
   if (!currentPuzzle) {
     return { success: false, message: "문제를 찾을 수 없습니다." };
   }
 
-  // Clean answer: remove spaces, convert to uppercase
+  // Sanitize: strip spaces, uppercase
   const sanitizedInput = rawAnswer.replace(/\s+/g, "").toUpperCase();
   const correctAnswer = currentPuzzle.answer.replace(/\s+/g, "").toUpperCase();
 
@@ -174,10 +179,10 @@ export function submitAnswer(pin: string, rawAnswer: string): {
 
   // Correct answer! Advance room
   const now = Date.now();
-  const nextRoomNum = session.currentRoom + 1;
+  const nextRoomNum = roomToValidate + 1;
 
   if (nextRoomNum > 10) {
-    // Game cleared!
+    session.currentRoom = 11;
     session.isCleared = true;
     session.clearedAt = now;
     session.status = "cleared";
@@ -199,14 +204,17 @@ export function submitAnswer(pin: string, rawAnswer: string): {
 
   return {
     success: true,
-    nextRoom: session.currentRoom,
+    nextRoom: session.isCleared ? 10 : session.currentRoom,
     isCleared: session.isCleared,
     totalTimeSeconds: session.totalTimeSeconds,
-    message: session.isCleared ? "축하합니다! 방탈출을 완료했습니다!" : "정답입니다! 다음 방으로 이동합니다.",
+    message: session.isCleared ? "축하합니다! 모든 방탈출을 완료했습니다!" : "정답입니다! 다음 방으로 이동합니다.",
   };
 }
 
-export function unlockHint(pin: string): {
+export function unlockHint(
+  pin: string,
+  clientCurrentRoom?: number
+): {
   success: boolean;
   hintIndex?: number;
   hintText?: string;
@@ -219,7 +227,8 @@ export function unlockHint(pin: string): {
     return { success: false, message: "세션을 찾을 수 없습니다." };
   }
 
-  const puzzle = PUZZLES.find((p) => p.roomNumber === session.currentRoom);
+  const roomNumber = clientCurrentRoom || session.currentRoom;
+  const puzzle = PUZZLES.find((p) => p.roomNumber === roomNumber);
   if (!puzzle) {
     return { success: false, message: "문제를 찾을 수 없습니다." };
   }
@@ -228,13 +237,12 @@ export function unlockHint(pin: string): {
   const enteredAt = session.roomEnteredAt || session.startedAt || now;
   const lastHintAt = session.lastHintUnlockedAt || enteredAt;
 
-  // Next hint index to unlock
   const nextHintIdx = session.unlockedHints.length;
   if (nextHintIdx >= puzzle.hints.length) {
     return { success: false, message: "이 방의 모든 힌트를 이미 열람했습니다." };
   }
 
-  // 1 minute (60s) cooldown
+  // 1-minute (60s) cooldown
   const COOLDOWN_MS = 60 * 1000;
   const timeSinceLastEvent = now - lastHintAt;
 
@@ -247,7 +255,6 @@ export function unlockHint(pin: string): {
     };
   }
 
-  // Unlock hint!
   session.unlockedHints.push(nextHintIdx);
   session.lastHintUnlockedAt = now;
   session.lastActiveAt = now;
