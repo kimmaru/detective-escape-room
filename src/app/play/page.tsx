@@ -69,16 +69,17 @@ export default function PlayPage() {
   const roomEnteredAtRef = useRef<number>(Date.now());
   const lastHintAtRef = useRef<number | null>(null);
 
-  // Cooldown countdown timer (strictly 120s per step)
+  // Cooldown countdown timer (first hint: 120s, subsequent: 60s)
   useEffect(() => {
     const timer = setInterval(() => {
       if (startedAtRef.current) {
         setElapsedSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000));
       }
 
+      const cooldownDuration = unlockedHints.length === 0 ? 120 : 60;
       const baseTime = lastHintAtRef.current || roomEnteredAtRef.current;
       const elapsedSinceBase = Math.floor((Date.now() - baseTime) / 1000);
-      const remaining = Math.max(0, 120 - elapsedSinceBase);
+      const remaining = Math.max(0, cooldownDuration - elapsedSinceBase);
       setHintCooldown(remaining);
       setCanUnlockNext(remaining === 0 && (puzzle ? unlockedHints.length < puzzle.totalHints : false));
     }, 1000);
@@ -120,10 +121,11 @@ export default function PlayPage() {
       if (s.roomEnteredAt) roomEnteredAtRef.current = s.roomEnteredAt;
       if (s.lastHintUnlockedAt) lastHintAtRef.current = s.lastHintUnlockedAt;
 
-      // Update cooldown based on server data (120s = 2 min)
+      // Update cooldown based on server data (first: 120s, subsequent: 60s)
       const base = s.lastHintUnlockedAt || s.roomEnteredAt || Date.now();
       const elapsed = Math.floor((Date.now() - base) / 1000);
-      const rem = Math.max(0, 120 - elapsed);
+      const targetCooldown = (s.unlockedHints || []).length === 0 ? 120 : 60;
+      const rem = Math.max(0, targetCooldown - elapsed);
       setHintCooldown(rem);
       setCanUnlockNext(rem === 0 && (data.puzzle ? (data.unlockedHints || []).length < data.puzzle.totalHints : false));
 
@@ -239,7 +241,7 @@ export default function PlayPage() {
         }
       } catch {}
       lastHintAtRef.current = Date.now();
-      setHintCooldown(120);
+      setHintCooldown(60);
       setCanUnlockNext(false);
       setIsHintModalOpen(true);
     } catch {
