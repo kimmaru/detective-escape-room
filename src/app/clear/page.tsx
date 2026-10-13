@@ -482,7 +482,7 @@ export default function ClearPage() {
               {/* 1. 이름 (필수) */}
               <div>
                 <label className="block text-xs font-bold text-amber-300 mb-1.5">
-                  이름 / 닉네임 <span className="text-red-400">*</span>
+                  이름 <span className="text-red-400">*</span>
                 </label>
                 <input
                   type="text"

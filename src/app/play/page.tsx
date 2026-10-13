@@ -334,26 +334,38 @@ export default function PlayPage() {
           router.push("/clear");
         }, 1200);
       } else {
-        // Show "맞아!" for 1.1s, then proceed to room transition
+        // Show "맞았어!" for 1.1s, then proceed to room transition
         setTimeout(() => {
           setAnswerFeedbackOverlay(null);
-          setIsRoomTransitioning(true);
-          setTimeout(() => {
-            // Reset room entered state for the new room
+          setIsRoomTransitioning(true); // 완전한 페이드아웃 (화면 가림)
+
+          setTimeout(async () => {
+            // 화면이 완전히 가려진 상태에서 새 방 데이터로 원자적(동시) 교체!
             const now = Date.now();
             roomEnteredAtRef.current = now;
             lastHintAtRef.current = null;
             setHintCooldown(120);
             setCanUnlockNext(false);
             setUnlockedHints([]);
-            setIsTypingFinished(false);
             setAnswerInput("");
             setFeedbackMsg(null);
+
+            // 1. 응답에 포함된 새 퍼즐 데이터를 즉각 세팅 (이전 방 잔상 및 대사 깜빡임 완전 방지)
+            if (data.nextPuzzle) {
+              setPuzzle(data.nextPuzzle);
+            }
             setCurrentRoom(data.nextRoom);
-            setIsRoomTransitioning(false);
-            loadGameState(pin);
-            setIsSubmitting(false);
-          }, 450);
+            setIsTypingFinished(false);
+
+            // 2. 서버 상태 동기화 완료 대기
+            await loadGameState(pin);
+
+            // 3. 새 방의 데이터가 완벽하게 준비된 후 부드럽게 페이드인
+            setTimeout(() => {
+              setIsRoomTransitioning(false);
+              setIsSubmitting(false);
+            }, 100);
+          }, 350);
         }, 1100);
       }
     } catch {
@@ -399,8 +411,8 @@ export default function PlayPage() {
 
       {/* Main Play Area */}
       <div
-        className={`flex-1 flex flex-col p-4 pb-28 max-w-md mx-auto w-full transition-all ${
-          isRoomTransitioning ? "animate-roomSlide opacity-50 scale-95" : ""
+        className={`flex-1 flex flex-col p-4 pb-28 max-w-md mx-auto w-full transition-opacity duration-300 ${
+          isRoomTransitioning ? "opacity-0 pointer-events-none" : "opacity-100"
         }`}
       >
         {/* Step 1: Upper Detective Dialogue Speech Box */}
@@ -408,13 +420,13 @@ export default function PlayPage() {
           <div className="p-5 rounded-2xl bg-[#231d19] border-2 border-amber-700/50 shadow-xl relative text-center">
             <div className="flex items-center justify-center gap-2 mb-3 text-amber-400 text-xs font-bold tracking-wider">
               <span className="px-2 py-0.5 rounded bg-amber-900/60 border border-amber-700/50 text-[10px]">
-                Q{currentRoom}
+                Q{puzzle.roomNumber}
               </span>
               <span>탐정의 말</span>
             </div>
 
             <TypewriterText
-              key={`dialogue-${currentRoom}`}
+              key={`dialogue-${puzzle.roomNumber}-${puzzle.dialogue.slice(0, 10)}`}
               text={puzzle.dialogue}
               speed={35}
               onComplete={handleTypingComplete}
@@ -431,12 +443,12 @@ export default function PlayPage() {
               <div
                 className="relative w-full rounded-xl overflow-hidden bg-black/40 border border-stone-800 flex items-center justify-center max-h-[60vh] transition-all duration-300 mx-auto"
                 style={{
-                  aspectRatio: currentRoom === 3 ? "800 / 533" : "597 / 800",
+                  aspectRatio: puzzle.roomNumber === 3 ? "800 / 533" : "597 / 800",
                 }}
               >
                 <Image
                   src={puzzle.image}
-                  alt={`문제 ${currentRoom} 단서`}
+                  alt={`문제 ${puzzle.roomNumber} 단서`}
                   fill
                   priority
                   className="object-contain cursor-zoom-in group-hover:scale-102 transition duration-300"
