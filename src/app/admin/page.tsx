@@ -140,7 +140,7 @@ export default function AdminPage() {
 
   const exportCSV = () => {
     if (!stats) return;
-    let csv = "PIN,닉네임,현재방,상태,사용힌트수,총소요시간(초)\n";
+    let csv = "수사암호,닉네임,현재방,상태,사용힌트수,총소요시간(초)\n";
     stats.users.forEach((u) => {
       csv += `${u.pin},${u.nickname},${u.isCleared ? "CLEAR" : u.currentRoom},${u.status},${u.unlockedHints?.length || 0},${u.totalTimeSeconds || 0}\n`;
     });
@@ -427,7 +427,7 @@ export default function AdminPage() {
                 type="text"
                 value={searchFilter}
                 onChange={(e) => setSearchFilter(e.target.value)}
-                placeholder="PIN 또는 닉네임 검색"
+                placeholder="수사 암호 또는 닉네임 검색"
                 className="pl-8 pr-3 py-1.5 rounded-xl bg-stone-900 border border-stone-700 text-xs text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500"
               />
             </div>
@@ -465,7 +465,7 @@ export default function AdminPage() {
           <table className="w-full text-left text-xs">
             <thead className="bg-[#241e1a] text-stone-400 border-b border-stone-800 font-mono">
               <tr>
-                <th className="py-3 px-4">PIN</th>
+                <th className="py-3 px-4">수사 암호 (6자리)</th>
                 <th className="py-3 px-4">닉네임</th>
                 <th className="py-3 px-4">현재 위치</th>
                 <th className="py-3 px-4">현재 방 체류시간</th>

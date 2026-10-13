@@ -7,7 +7,6 @@ const CACHE_FILE = path.join("/tmp", "escaperoom_sessions.json");
 
 interface GlobalStore {
   sessions: Record<string, PlayerSession>;
-  lastBlobSync: number;
 }
 
 declare global {
@@ -16,15 +15,18 @@ declare global {
 }
 
 function loadPersistedSessions(): Record<string, PlayerSession> {
+  const defaultPins = generateDefaultPins();
   try {
     if (fs.existsSync(CACHE_FILE)) {
       const data = fs.readFileSync(CACHE_FILE, "utf-8");
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      // Merge with default pins to ensure all 100 exist
+      return { ...defaultPins, ...parsed };
     }
   } catch (e) {
     console.error("Failed to load sessions from /tmp:", e);
   }
-  return generateDefaultPins();
+  return defaultPins;
 }
 
 function savePersistedSessions(sessions: Record<string, PlayerSession>) {
@@ -39,7 +41,6 @@ function getStore(): GlobalStore {
   if (!globalThis.__escapeStore) {
     globalThis.__escapeStore = {
       sessions: loadPersistedSessions(),
-      lastBlobSync: 0,
     };
   }
   return globalThis.__escapeStore;
@@ -52,37 +53,27 @@ export function getAllSessions(): PlayerSession[] {
 
 export function getSession(pin: string): PlayerSession | null {
   const store = getStore();
-  const cleanPin = pin.trim();
+  const cleanPin = pin.trim().toUpperCase();
+
+  // If session doesn't exist, check defaultPins reload
   if (!store.sessions[cleanPin]) {
-    if (/^\d{4}$/.test(cleanPin)) {
-      const num = parseInt(cleanPin, 10);
-      const pad = String(num % 100 || 1).padStart(2, "0");
-      store.sessions[cleanPin] = {
-        pin: cleanPin,
-        nickname: `탐정조수_${pad}`,
-        currentRoom: 1,
-        startedAt: null,
-        roomEnteredAt: null,
-        unlockedHints: [],
-        lastHintUnlockedAt: null,
-        isCleared: false,
-        clearedAt: null,
-        totalTimeSeconds: 0,
-        lastActiveAt: Date.now(),
-        status: "ready",
-      };
+    const defaults = generateDefaultPins();
+    if (defaults[cleanPin]) {
+      store.sessions[cleanPin] = defaults[cleanPin];
       savePersistedSessions(store.sessions);
     } else {
       return null;
     }
   }
-  return store.sessions[cleanPin];
+
+  return store.sessions[cleanPin] || null;
 }
 
 export function startOrResumeSession(pin: string, customNickname?: string): PlayerSession {
-  const session = getSession(pin);
+  const cleanPin = pin.trim().toUpperCase();
+  const session = getSession(cleanPin);
   if (!session) {
-    throw new Error("존재하지 않는 PIN 번호입니다.");
+    throw new Error("유효하지 않은 수사 암호입니다. 암호를 다시 확인해주세요.");
   }
 
   const now = Date.now();
@@ -100,18 +91,21 @@ export function startOrResumeSession(pin: string, customNickname?: string): Play
   session.lastActiveAt = now;
 
   const store = getStore();
-  store.sessions[pin] = session;
+  store.sessions[cleanPin] = session;
   savePersistedSessions(store.sessions);
   return session;
 }
 
 export function syncClientSession(clientState: Partial<PlayerSession> & { pin: string }): PlayerSession {
   const store = getStore();
-  const pin = clientState.pin;
+  const pin = clientState.pin.trim().toUpperCase();
   let session = store.sessions[pin];
 
   if (!session) {
     session = getSession(pin)!;
+    if (!session) {
+      throw new Error("Session not found");
+    }
   }
 
   const now = Date.now();
@@ -152,12 +146,12 @@ export function submitAnswer(
   message?: string;
   totalTimeSeconds?: number;
 } {
-  const session = getSession(pin);
+  const cleanPin = pin.trim().toUpperCase();
+  const session = getSession(cleanPin);
   if (!session) {
     return { success: false, message: "세션을 찾을 수 없습니다." };
   }
 
-  // Use client's current room if provided, otherwise session's
   const roomToValidate = clientCurrentRoom || session.currentRoom;
 
   if (session.isCleared || roomToValidate > 10) {
@@ -199,7 +193,7 @@ export function submitAnswer(
 
   session.lastActiveAt = now;
   const store = getStore();
-  store.sessions[pin] = session;
+  store.sessions[cleanPin] = session;
   savePersistedSessions(store.sessions);
 
   return {
@@ -222,7 +216,8 @@ export function unlockHint(
   message?: string;
   remainingCooldown?: number;
 } {
-  const session = getSession(pin);
+  const cleanPin = pin.trim().toUpperCase();
+  const session = getSession(cleanPin);
   if (!session) {
     return { success: false, message: "세션을 찾을 수 없습니다." };
   }
@@ -239,7 +234,7 @@ export function unlockHint(
 
   const nextHintIdx = session.unlockedHints.length;
   if (nextHintIdx >= puzzle.hints.length) {
-    return { success: false, message: "이 방의 모든 힌트를 이미 열람했습니다." };
+    return { success: false, message: "이 방의 모든 힌트와 정답을 이미 열람했습니다." };
   }
 
   // 1-minute (60s) cooldown
@@ -250,7 +245,7 @@ export function unlockHint(
     const remainingSeconds = Math.ceil((COOLDOWN_MS - timeSinceLastEvent) / 1000);
     return {
       success: false,
-      message: `아직 힌트를 볼 수 없습니다. (${remainingSeconds}초 후 활성화)`,
+      message: `아직 다음 단서를 볼 수 없습니다. (${remainingSeconds}초 후 활성화)`,
       remainingCooldown: remainingSeconds,
     };
   }
@@ -260,7 +255,7 @@ export function unlockHint(
   session.lastActiveAt = now;
 
   const store = getStore();
-  store.sessions[pin] = session;
+  store.sessions[cleanPin] = session;
   savePersistedSessions(store.sessions);
 
   return {
@@ -272,7 +267,8 @@ export function unlockHint(
 }
 
 export function passRoomAdmin(pin: string): { success: boolean; nextRoom?: number; isCleared?: boolean } {
-  const session = getSession(pin);
+  const cleanPin = pin.trim().toUpperCase();
+  const session = getSession(cleanPin);
   if (!session) return { success: false };
 
   const now = Date.now();
@@ -292,7 +288,7 @@ export function passRoomAdmin(pin: string): { success: boolean; nextRoom?: numbe
   session.lastActiveAt = now;
 
   const store = getStore();
-  store.sessions[pin] = session;
+  store.sessions[cleanPin] = session;
   savePersistedSessions(store.sessions);
   return { success: true, nextRoom: session.currentRoom, isCleared: session.isCleared };
 }
@@ -300,13 +296,11 @@ export function passRoomAdmin(pin: string): { success: boolean; nextRoom?: numbe
 export function resetSession(pin?: string) {
   const store = getStore();
   if (pin) {
-    const cleanPin = pin.trim();
+    const cleanPin = pin.trim().toUpperCase();
     if (store.sessions[cleanPin]) {
-      const num = parseInt(cleanPin, 10);
-      const pad = String(num % 100 || 1).padStart(2, "0");
       store.sessions[cleanPin] = {
         pin: cleanPin,
-        nickname: `탐정조수_${pad}`,
+        nickname: store.sessions[cleanPin].nickname,
         currentRoom: 1,
         startedAt: null,
         roomEnteredAt: null,

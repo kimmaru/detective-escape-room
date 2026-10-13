@@ -11,7 +11,6 @@ import {
   User,
   AlertCircle,
   CheckCircle2,
-  HelpCircle,
 } from "lucide-react";
 import TypewriterText from "@/components/TypewriterText";
 import HintModal from "@/components/HintModal";
@@ -23,7 +22,6 @@ interface PuzzleData {
   image: string;
   dialogue: string;
   question: string;
-  formatGuide: string;
   totalHints: number;
 }
 
@@ -50,11 +48,10 @@ export default function PlayPage() {
 
   // Hint cooldown
   const [hintCooldown, setHintCooldown] = useState<number>(60);
-  const [canUnlockHint, setCanUnlockHint] = useState<boolean>(false);
+  const [canUnlockNext, setCanUnlockNext] = useState<boolean>(false);
 
   // Modals
   const [isHintModalOpen, setIsHintModalOpen] = useState<boolean>(false);
-  const [isHintConfirmStep, setIsHintConfirmStep] = useState<boolean>(true);
   const [isLightboxOpen, setIsLightboxOpen] = useState<boolean>(false);
   const [isHintLoading, setIsHintLoading] = useState<boolean>(false);
 
@@ -63,25 +60,24 @@ export default function PlayPage() {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
-  // Elapsed total timer
+  // Timestamps
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const startedAtRef = useRef<number | null>(null);
   const roomEnteredAtRef = useRef<number>(Date.now());
   const lastHintAtRef = useRef<number | null>(null);
 
-  // Cooldown countdown timer
+  // Cooldown countdown timer (strictly 60s per step)
   useEffect(() => {
     const timer = setInterval(() => {
       if (startedAtRef.current) {
         setElapsedSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000));
       }
 
-      // Compute cooldown
       const baseTime = lastHintAtRef.current || roomEnteredAtRef.current;
       const elapsedSinceBase = Math.floor((Date.now() - baseTime) / 1000);
       const remaining = Math.max(0, 60 - elapsedSinceBase);
       setHintCooldown(remaining);
-      setCanUnlockHint(remaining === 0 && (puzzle ? unlockedHints.length < puzzle.totalHints : false));
+      setCanUnlockNext(remaining === 0 && (puzzle ? unlockedHints.length < puzzle.totalHints : false));
     }, 1000);
 
     return () => clearInterval(timer);
@@ -113,14 +109,18 @@ export default function PlayPage() {
       setPuzzle(data.puzzle);
       setUnlockedHints(data.unlockedHints || []);
       setTotalPuzzles(data.totalPuzzles || 10);
-      setHintCooldown(data.hintCooldownRemaining ?? 60);
-      setCanUnlockHint(Boolean(data.canUnlockHint));
 
       if (s.startedAt) startedAtRef.current = s.startedAt;
       if (s.roomEnteredAt) roomEnteredAtRef.current = s.roomEnteredAt;
       if (s.lastHintUnlockedAt) lastHintAtRef.current = s.lastHintUnlockedAt;
 
-      // Update local storage
+      // Update cooldown based on server data
+      const base = s.lastHintUnlockedAt || s.roomEnteredAt || Date.now();
+      const elapsed = Math.floor((Date.now() - base) / 1000);
+      const rem = Math.max(0, 60 - elapsed);
+      setHintCooldown(rem);
+      setCanUnlockNext(rem === 0 && (data.puzzle ? (data.unlockedHints || []).length < data.puzzle.totalHints : false));
+
       localStorage.setItem("escape_session", JSON.stringify(s));
     } catch (e) {
       console.warn("Failed to load game state:", e);
@@ -154,7 +154,7 @@ export default function PlayPage() {
     }
   }, [loadGameState, router]);
 
-  // Periodic heartbeat sync to ensure zero-loss state
+  // Periodic heartbeat sync
   useEffect(() => {
     if (!pin) return;
     const interval = setInterval(() => {
@@ -173,12 +173,10 @@ export default function PlayPage() {
     return () => clearInterval(interval);
   }, [pin, currentRoom]);
 
-  // Reset typing state on room change
-  useEffect(() => {
-    setIsTypingFinished(false);
-    setFeedbackMsg(null);
-    setAnswerInput("");
-  }, [currentRoom]);
+  // Stable callback for typing completion
+  const handleTypingComplete = useCallback(() => {
+    setIsTypingFinished(true);
+  }, []);
 
   // Format seconds to mm:ss
   const formatTime = (totalSeconds: number) => {
@@ -187,24 +185,17 @@ export default function PlayPage() {
     return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
-  // Handle Hint button click
+  // Open Hint Modal
   const handleHintButtonClick = () => {
-    if (unlockedHints.length > 0 && !canUnlockHint) {
-      // User can view already unlocked hints even during cooldown!
-      setIsHintConfirmStep(false);
-      setIsHintModalOpen(true);
-      return;
+    // If cooldown has finished and 0 hints unlocked yet, unlock Hint 1 automatically
+    if (unlockedHints.length === 0 && canUnlockNext) {
+      handleUnlockNextHint();
     }
-
-    if (!canUnlockHint) return;
-
-    // Show confirmation step first
-    setIsHintConfirmStep(true);
     setIsHintModalOpen(true);
   };
 
-  // Confirm Unlock Hint
-  const handleConfirmUnlock = async () => {
+  // Unlock next hint in the modal
+  const handleUnlockNextHint = async () => {
     if (!pin) return;
     setIsHintLoading(true);
     try {
@@ -216,13 +207,12 @@ export default function PlayPage() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        setFeedbackMsg({ type: "error", text: data.message || "힌트 해금 실패" });
-        setIsHintModalOpen(false);
+        setFeedbackMsg({ type: "error", text: data.message || "단서 해금 실패" });
         setIsHintLoading(false);
         return;
       }
 
-      // Add hint to list
+      // Append new hint to unlocked list
       const newHintItem: HintItem = {
         index: data.hintIndex,
         text: data.hintText,
@@ -230,13 +220,10 @@ export default function PlayPage() {
       setUnlockedHints((prev) => [...prev, newHintItem]);
       lastHintAtRef.current = Date.now();
       setHintCooldown(60);
-      setCanUnlockHint(false);
-
-      // Switch to hint content view
-      setIsHintConfirmStep(false);
+      setCanUnlockNext(false);
+      setIsHintModalOpen(true);
     } catch {
-      setFeedbackMsg({ type: "error", text: "힌트를 불러오는 중 통신 에러가 발생했습니다." });
-      setIsHintModalOpen(false);
+      setFeedbackMsg({ type: "error", text: "단서를 불러오는 중 통신 에러가 발생했습니다." });
     } finally {
       setIsHintLoading(false);
     }
@@ -259,7 +246,6 @@ export default function PlayPage() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        // Wrong answer: shake & error feedback
         setIsShaking(true);
         setTimeout(() => setIsShaking(false), 500);
         setFeedbackMsg({
@@ -274,12 +260,21 @@ export default function PlayPage() {
       setFeedbackMsg({ type: "success", text: "정답입니다!" });
 
       if (data.isCleared) {
-        // Clear celebration!
         router.push("/clear");
       } else {
-        // Room transition animation
+        // Room transition motion
         setIsRoomTransitioning(true);
         setTimeout(() => {
+          // Reset room entered state for the new room
+          const now = Date.now();
+          roomEnteredAtRef.current = now;
+          lastHintAtRef.current = null;
+          setHintCooldown(60);
+          setCanUnlockNext(false);
+          setUnlockedHints([]);
+          setIsTypingFinished(false);
+          setAnswerInput("");
+          setFeedbackMsg(null);
           setCurrentRoom(data.nextRoom);
           setIsRoomTransitioning(false);
           loadGameState(pin);
@@ -334,8 +329,8 @@ export default function PlayPage() {
       >
         {/* Step 1: Upper Detective Dialogue Speech Box */}
         <section className="relative mb-4">
-          <div className="p-4 rounded-2xl bg-[#231d19] border-2 border-amber-700/50 shadow-xl relative">
-            <div className="flex items-center gap-2 mb-2 text-amber-400 text-xs font-bold tracking-wider">
+          <div className="p-5 rounded-2xl bg-[#231d19] border-2 border-amber-700/50 shadow-xl relative">
+            <div className="flex items-center gap-2 mb-3 text-amber-400 text-xs font-bold tracking-wider">
               <span className="px-2 py-0.5 rounded bg-amber-900/60 border border-amber-700/50 text-[10px]">
                 Q{currentRoom}
               </span>
@@ -346,8 +341,7 @@ export default function PlayPage() {
               key={`dialogue-${currentRoom}`}
               text={puzzle.dialogue}
               speed={35}
-              onComplete={() => setIsTypingFinished(true)}
-              className="text-stone-200 text-sm"
+              onComplete={handleTypingComplete}
             />
           </div>
         </section>
@@ -367,7 +361,6 @@ export default function PlayPage() {
                   onClick={() => setIsLightboxOpen(true)}
                 />
 
-                {/* Tap to zoom button overlay */}
                 <button
                   onClick={() => setIsLightboxOpen(true)}
                   className="absolute bottom-3 right-3 p-2 rounded-xl bg-black/75 text-amber-300 hover:text-white backdrop-blur-md border border-amber-600/40 flex items-center gap-1.5 text-xs font-bold shadow-lg"
@@ -377,15 +370,12 @@ export default function PlayPage() {
                 </button>
               </div>
 
-              {/* Question & Guide */}
-              <div className="mt-3 p-3 rounded-xl bg-[#1d1815] border border-stone-800">
+              {/* Question Text (format guide deleted as requested) */}
+              <div className="mt-3 p-3.5 rounded-xl bg-[#1d1815] border border-stone-800">
                 <p className="text-stone-100 font-bold text-sm leading-snug">
                   {puzzle.question}
                 </p>
-                <div className="mt-2 flex items-center justify-between">
-                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-amber-950/70 border border-amber-800/60 text-amber-300">
-                    형식: {puzzle.formatGuide}
-                  </span>
+                <div className="mt-2 text-right">
                   <span className="text-[11px] text-stone-400">
                     이미지를 터치하면 크게 볼 수 있습니다
                   </span>
@@ -402,7 +392,6 @@ export default function PlayPage() {
 
       {/* Step 3: Fixed Bottom Control Bar (Hint Button + Answer Input) */}
       <div className="fixed bottom-0 left-0 right-0 z-30 bg-[#191512]/95 border-t border-stone-800 backdrop-blur-md px-4 pt-2.5 pb-6 max-w-md mx-auto">
-        {/* Feedback message banner if any */}
         {feedbackMsg && (
           <div
             className={`mb-2 p-2 rounded-xl text-xs font-bold flex items-center gap-2 ${
@@ -425,33 +414,31 @@ export default function PlayPage() {
           <button
             type="button"
             onClick={handleHintButtonClick}
-            disabled={!canUnlockHint && unlockedHints.length === 0}
+            disabled={unlockedHints.length === 0 && hintCooldown > 0}
             className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow ${
-              canUnlockHint
-                ? "bg-amber-600 text-stone-950 hover:bg-amber-500 animate-pulseGlow cursor-pointer border border-amber-300"
-                : unlockedHints.length > 0
+              unlockedHints.length > 0
                 ? "bg-stone-800 text-amber-300 hover:bg-stone-700 border border-stone-700 cursor-pointer"
+                : hintCooldown === 0
+                ? "bg-amber-600 text-stone-950 hover:bg-amber-500 animate-pulseGlow cursor-pointer border border-amber-300"
                 : "bg-stone-900 text-stone-500 border border-stone-800 cursor-not-allowed opacity-60"
             }`}
           >
-            <Lightbulb className={`w-3.5 h-3.5 ${canUnlockHint ? "fill-stone-950" : ""}`} />
-            {canUnlockHint ? (
-              <span>힌트 열람 가능 ({unlockedHints.length + 1}/{puzzle.totalHints})</span>
-            ) : unlockedHints.length > 0 ? (
-              <span>열람한 힌트 보기 ({unlockedHints.length}/{puzzle.totalHints})</span>
+            <Lightbulb
+              className={`w-3.5 h-3.5 ${
+                hintCooldown === 0 && unlockedHints.length === 0 ? "fill-stone-950" : ""
+              }`}
+            />
+            {unlockedHints.length > 0 ? (
+              <span>💡 단서 수첩 ({unlockedHints.length}개 확인)</span>
+            ) : hintCooldown === 0 ? (
+              <span>💡 단서 힌트 열람</span>
             ) : (
-              <span>힌트 ({hintCooldown}초 후)</span>
+              <span>단서 힌트 ({hintCooldown}초 후)</span>
             )}
           </button>
-
-          {unlockedHints.length < puzzle.totalHints && hintCooldown > 0 && (
-            <span className="text-[10px] text-stone-400 font-mono">
-              다음 힌트까지 {hintCooldown}s
-            </span>
-          )}
         </div>
 
-        {/* Answer Input Field & Submit Button */}
+        {/* Answer Input Field (Placeholder simplified as requested) */}
         <form
           onSubmit={handleSubmit}
           className={`flex gap-2 ${isShaking ? "animate-shake" : ""}`}
@@ -460,7 +447,7 @@ export default function PlayPage() {
             type="text"
             value={answerInput}
             onChange={(e) => setAnswerInput(e.target.value.toUpperCase())}
-            placeholder={`정답 입력 (${puzzle.formatGuide})`}
+            placeholder="정답을 입력하세요"
             autoCapitalize="characters"
             autoCorrect="off"
             spellCheck="false"
@@ -477,7 +464,7 @@ export default function PlayPage() {
         </form>
       </div>
 
-      {/* Lightbox Modal for zooming problem image */}
+      {/* Lightbox Modal */}
       <LightboxModal
         isOpen={isLightboxOpen}
         onClose={() => setIsLightboxOpen(false)}
@@ -488,11 +475,9 @@ export default function PlayPage() {
       {/* Hint Modal */}
       <HintModal
         isOpen={isHintModalOpen}
-        isConfirmStep={isHintConfirmStep}
         onClose={() => setIsHintModalOpen(false)}
-        onConfirm={handleConfirmUnlock}
+        onUnlockNext={handleUnlockNextHint}
         unlockedHints={unlockedHints}
-        currentHintIndex={unlockedHints.length}
         totalHints={puzzle.totalHints}
         nextCooldownRemaining={hintCooldown}
         isLoading={isHintLoading}
