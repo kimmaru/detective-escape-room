@@ -422,7 +422,12 @@ export default function PlayPage() {
           <section className="animate-fadeIn flex flex-col gap-4">
             {/* Clue / Problem Image Card */}
             <div className="rounded-2xl bg-[#26201b] border border-stone-700/80 p-3 shadow-2xl relative overflow-hidden group">
-              <div className="relative aspect-[9/10] w-full rounded-xl overflow-hidden bg-black/40 border border-stone-800 flex items-center justify-center">
+              <div
+                className="relative w-full rounded-xl overflow-hidden bg-black/40 border border-stone-800 flex items-center justify-center max-h-[60vh] transition-all duration-300 mx-auto"
+                style={{
+                  aspectRatio: currentRoom === 3 ? "800 / 533" : "597 / 800",
+                }}
+              >
                 <Image
                   src={puzzle.image}
                   alt={`문제 ${currentRoom} 단서`}

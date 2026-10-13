@@ -147,9 +147,7 @@ export default function ClearPage() {
           축하드립니다!
         </h1>
         <p className="text-sm font-semibold text-amber-400/90 mb-8 leading-relaxed">
-          카톡 방탈출 시리즈
-          <br />
-          <strong className="text-stone-100 text-base">&apos;가인과 아벨&apos;</strong>을 완벽히 클리어 하셨습니다!
+          <strong className="text-stone-100 text-base">&apos;가인과 아벨&apos;</strong> 사건의 전말을 모두 밝혀내셨습니다!
         </p>
 
         {/* Result Summary Card */}
@@ -192,18 +190,10 @@ export default function ClearPage() {
         {/* Action Buttons */}
         <div className="w-full space-y-3">
           <button
-            onClick={handleOpenReward}
-            className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black text-base shadow-xl flex items-center justify-center gap-2 transition active:scale-95 border border-amber-300/40"
-          >
-            <Gift className="w-5 h-5" />
-            <span>🎁 사건 해결 보상 다시 보기</span>
-          </button>
-
-          <button
             onClick={() => router.push("/")}
-            className="w-full py-3.5 rounded-2xl bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition active:scale-95 border border-stone-700"
+            className="w-full py-4 rounded-2xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-black text-base shadow-xl flex items-center justify-center gap-2 transition active:scale-95 border border-amber-300/40"
           >
-            <Home className="w-4 h-4" />
+            <Home className="w-5 h-5 fill-stone-950" />
             <span>메인 화면으로</span>
           </button>
         </div>
