@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { submitReview, getSession, getAllReviews, syncClientSession } from "@/lib/store";
+import {
+  submitReview,
+  getSession,
+  getAllReviews,
+  syncClientSession,
+  syncReviewsFromGoogleSheet,
+} from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -159,6 +165,10 @@ export async function GET(req: NextRequest) {
         { status: 403 }
       );
     }
+
+    try {
+      await syncReviewsFromGoogleSheet();
+    } catch {}
 
     const reviews = getAllReviews(false);
     const myReview = session.review || null;

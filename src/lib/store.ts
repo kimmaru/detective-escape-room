@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { PlayerSession, ReviewData, generateDefaultPins } from "../data/pins";
 import { PUZZLES } from "../data/puzzles";
+import { SEED_REVIEWS } from "../data/seedReviews";
 
 const CACHE_FILE = path.join("/tmp", "escaperoom_sessions.json");
 const REVIEWS_FILE = path.join("/tmp", "escaperoom_reviews.json");
@@ -9,7 +10,12 @@ const REVIEWS_FILE = path.join("/tmp", "escaperoom_reviews.json");
 export function getAllReviews(includeHidden = false): Array<ReviewData & { pin: string }> {
   const reviewMap = new Map<string, ReviewData & { pin: string }>();
 
-  // 1. Read from persistent file cache
+  // 1. Pre-seed default reviews from spreadsheet
+  SEED_REVIEWS.forEach((r) => {
+    reviewMap.set(r.pin.toUpperCase(), { ...r, hidden: false });
+  });
+
+  // 2. Read from persistent file cache (overrides seeds with user's modifications & hidden flags)
   try {
     if (fs.existsSync(REVIEWS_FILE)) {
       const data = fs.readFileSync(REVIEWS_FILE, "utf-8");
@@ -17,7 +23,7 @@ export function getAllReviews(includeHidden = false): Array<ReviewData & { pin: 
       if (Array.isArray(parsed)) {
         parsed.forEach((r) => {
           if (r && r.pin) {
-            reviewMap.set(r.pin, r);
+            reviewMap.set(r.pin.toUpperCase(), r);
           }
         });
       }
@@ -26,11 +32,12 @@ export function getAllReviews(includeHidden = false): Array<ReviewData & { pin: 
     console.error("Failed to load reviews from /tmp:", e);
   }
 
-  // 2. Merge reviews from active sessions
+  // 3. Merge reviews from active sessions
   if (globalThis.__escapeStore?.sessions) {
     Object.values(globalThis.__escapeStore.sessions).forEach((s) => {
-      if (s.hasReviewed && s.review && !reviewMap.has(s.pin)) {
-        reviewMap.set(s.pin, { ...s.review, pin: s.pin });
+      const pinKey = s.pin.toUpperCase();
+      if (s.hasReviewed && s.review && !reviewMap.has(pinKey)) {
+        reviewMap.set(pinKey, { ...s.review, pin: s.pin });
       }
     });
   }
@@ -41,6 +48,92 @@ export function getAllReviews(includeHidden = false): Array<ReviewData & { pin: 
   );
 
   return includeHidden ? list : list.filter((r) => !r.hidden);
+}
+
+const GOOGLE_SHEET_CSV_URL =
+  "https://docs.google.com/spreadsheets/d/1hxHY2paDQP1E3iWw1ZPhusdFvKLAk86mxvk0l4aVQgA/export?format=csv";
+
+let lastSheetSyncAt = 0;
+const SHEET_SYNC_INTERVAL = 15 * 1000; // 15초 쿨다운
+
+export async function syncReviewsFromGoogleSheet(): Promise<void> {
+  const now = Date.now();
+  if (now - lastSheetSyncAt < SHEET_SYNC_INTERVAL) return;
+  lastSheetSyncAt = now;
+
+  try {
+    const res = await fetch(GOOGLE_SHEET_CSV_URL, { cache: "no-store" });
+    if (!res.ok) return;
+    const text = await res.text();
+    const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length <= 1) return;
+
+    const list = getAllReviews(true);
+    const map = new Map<string, ReviewData & { pin: string }>();
+    list.forEach((r) => map.set(r.pin.toUpperCase(), r));
+
+    let hasUpdates = false;
+
+    for (let i = 1; i < lines.length; i++) {
+      const row: string[] = [];
+      let cur = "";
+      let inQuote = false;
+      const line = lines[i];
+
+      for (let j = 0; j < line.length; j++) {
+        const c = line[j];
+        if (c === '"') {
+          inQuote = !inQuote;
+        } else if (c === "," && !inQuote) {
+          row.push(cur.trim());
+          cur = "";
+        } else {
+          cur += c;
+        }
+      }
+      row.push(cur.trim());
+
+      if (row.length >= 6) {
+        const dateStr = row[0];
+        const pin = row[1];
+        const name = row[2];
+        const driveUrl = row[4];
+        const content = row[5];
+        if (!pin || !content) continue;
+
+        let photo: string | null = null;
+        if (driveUrl && driveUrl.includes("drive.google.com")) {
+          const m = driveUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+          if (m) photo = `https://lh3.googleusercontent.com/d/${m[1]}`;
+        }
+
+        const cleanPin = pin.trim().toUpperCase();
+        const existing = map.get(cleanPin);
+
+        if (!existing) {
+          const parsedDate = new Date(dateStr.replace(" ", "T") + "+09:00").getTime();
+          map.set(cleanPin, {
+            pin,
+            name: name || "익명 탐정",
+            content,
+            photo,
+            createdAt: !isNaN(parsedDate) ? parsedDate : Date.now(),
+            hidden: false,
+          });
+          hasUpdates = true;
+        }
+      }
+    }
+
+    if (hasUpdates) {
+      const mergedList = Array.from(map.values()).sort(
+        (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+      );
+      fs.writeFileSync(REVIEWS_FILE, JSON.stringify(mergedList, null, 2));
+    }
+  } catch (e) {
+    console.error("Failed to sync reviews from Google Sheet:", e);
+  }
 }
 
 function saveReviewToCache(reviewWithPin: ReviewData & { pin: string }) {

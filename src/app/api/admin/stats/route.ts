@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllSessions, getAllReviews } from "@/lib/store";
+import { getAllSessions, getAllReviews, syncReviewsFromGoogleSheet } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
+  try {
+    await syncReviewsFromGoogleSheet();
+  } catch {}
+
   const sessions = getAllSessions();
   const reviews = getAllReviews(true);
   const now = Date.now();
