@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { passRoomAdmin, resetSession } from "@/lib/store";
+import { passRoomAdmin, resetSession, toggleReviewVisibility } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
-    const { action, pin, adminKey } = await req.json();
+    const { action, pin, hide, adminKey } = await req.json();
 
     // Basic admin authentication key (default: 2026 or ADMIN)
     const validKey = process.env.ADMIN_KEY || "2026";
@@ -21,6 +21,18 @@ export async function POST(req: NextRequest) {
     if (action === "reset") {
       resetSession(pin);
       return NextResponse.json({ success: true, message: pin ? `${pin}번 유저가 초기화되었습니다.` : "전체 유저가 초기화되었습니다." });
+    }
+
+    if (action === "toggleReview" && pin) {
+      const res = toggleReviewVisibility(pin, hide);
+      if (!res.success) {
+        return NextResponse.json({ error: "해당 후기를 찾을 수 없습니다." }, { status: 404 });
+      }
+      return NextResponse.json({
+        success: true,
+        message: `${pin}번 참가자의 후기가 ${res.hidden ? "숨김" : "노출"} 처리되었습니다.`,
+        hidden: res.hidden,
+      });
     }
 
     return NextResponse.json({ error: "올바르지 않은 명령입니다." }, { status: 400 });

@@ -6,7 +6,7 @@ import { PUZZLES } from "../data/puzzles";
 const CACHE_FILE = path.join("/tmp", "escaperoom_sessions.json");
 const REVIEWS_FILE = path.join("/tmp", "escaperoom_reviews.json");
 
-export function getAllReviews(): Array<ReviewData & { pin: string }> {
+export function getAllReviews(includeHidden = false): Array<ReviewData & { pin: string }> {
   const reviewMap = new Map<string, ReviewData & { pin: string }>();
 
   // 1. Read from persistent file cache
@@ -36,20 +36,54 @@ export function getAllReviews(): Array<ReviewData & { pin: string }> {
   }
 
   // Sort by newest first
-  return Array.from(reviewMap.values()).sort(
+  const list = Array.from(reviewMap.values()).sort(
     (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
   );
+
+  return includeHidden ? list : list.filter((r) => !r.hidden);
 }
 
 function saveReviewToCache(reviewWithPin: ReviewData & { pin: string }) {
   try {
-    const list = getAllReviews();
+    const list = getAllReviews(true);
+    const existing = list.find((r) => r.pin === reviewWithPin.pin);
+    const hidden = reviewWithPin.hidden !== undefined ? reviewWithPin.hidden : existing?.hidden;
+
     const filtered = list.filter((r) => r.pin !== reviewWithPin.pin);
-    filtered.unshift(reviewWithPin);
+    filtered.unshift({ ...reviewWithPin, hidden });
     fs.writeFileSync(REVIEWS_FILE, JSON.stringify(filtered, null, 2));
   } catch (e) {
     console.error("Failed to save review to /tmp:", e);
   }
+}
+
+export function toggleReviewVisibility(
+  pin: string,
+  hide?: boolean
+): { success: boolean; hidden?: boolean } {
+  const cleanPin = resolvePin(pin);
+  const reviews = getAllReviews(true);
+  const target = reviews.find((r) => r.pin === cleanPin);
+  if (!target) {
+    return { success: false };
+  }
+
+  const newHidden = hide !== undefined ? hide : !target.hidden;
+  target.hidden = newHidden;
+
+  try {
+    fs.writeFileSync(REVIEWS_FILE, JSON.stringify(reviews, null, 2));
+  } catch (e) {
+    console.error("Failed to update reviews file:", e);
+  }
+
+  const store = getStore();
+  if (store.sessions[cleanPin] && store.sessions[cleanPin].review) {
+    store.sessions[cleanPin].review!.hidden = newHidden;
+    savePersistedSessions(store.sessions);
+  }
+
+  return { success: true, hidden: newHidden };
 }
 
 
@@ -196,10 +230,21 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
   if (clientState.unlockedHints && clientState.unlockedHints.length >= session.unlockedHints.length) {
     session.unlockedHints = clientState.unlockedHints;
   }
-  if (clientState.hasReviewed) {
+  if (clientState.hasReviewed || clientState.review) {
     session.hasReviewed = true;
-    if (clientState.review && !session.review) {
-      session.review = clientState.review;
+    if (clientState.review) {
+      session.review = {
+        ...session.review,
+        ...clientState.review,
+      };
+      saveReviewToCache({
+        name: session.review.name || session.nickname || "명탐정",
+        content: session.review.content || "",
+        photo: session.review.photo || null,
+        createdAt: session.review.createdAt || Date.now(),
+        hidden: session.review.hidden || false,
+        pin,
+      });
     }
   }
 

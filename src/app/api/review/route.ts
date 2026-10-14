@@ -44,10 +44,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 중복 작성/수정 방지 (1회 제한)
+    // 이미 작성된 후기가 있는 경우
     if (session.hasReviewed) {
       return NextResponse.json(
-        { success: false, message: "이미 후기를 등록하셨습니다. 후기는 1인당 1회만 등록 가능하며 수정할 수 없습니다." },
+        { success: false, message: "이미 소중한 후기가 등록되어 있습니다." },
         { status: 400 }
       );
     }
@@ -160,16 +160,25 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const reviews = getAllReviews();
-    return NextResponse.json({
-      success: true,
-      isCleared: true,
-      hasReviewed: !!session.hasReviewed,
-      myPin: session.pin,
-      myReview: session.review || null,
-      total: reviews.length,
-      reviews,
-    });
+    const reviews = getAllReviews(false);
+    return NextResponse.json(
+      {
+        success: true,
+        isCleared: true,
+        hasReviewed: !!session.hasReviewed,
+        myPin: session.pin,
+        myReview: session.review || null,
+        total: reviews.length,
+        reviews,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
+        },
+      }
+    );
   } catch (error) {
     console.error("Review fetch error:", error);
     return NextResponse.json(

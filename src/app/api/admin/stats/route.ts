@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllSessions } from "@/lib/store";
+import { getAllSessions, getAllReviews } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
   const sessions = getAllSessions();
+  const reviews = getAllReviews(true);
   const now = Date.now();
 
   const roomDistribution: Record<string, number> = {
@@ -69,12 +70,18 @@ export async function GET(req: NextRequest) {
     return (b.lastActiveAt || 0) - (a.lastActiveAt || 0);
   });
 
+  const totalReviews = reviews.length;
+  const hiddenReviews = reviews.filter((r) => r.hidden).length;
+
   return NextResponse.json({
     totalUsers: sessions.length,
     startedCount,
     activeCount,
     clearedCount,
     avgClearSeconds,
+    totalReviews,
+    hiddenReviews,
+    reviews,
     roomDistribution,
     bottlenecks,
     users: sortedUsers,

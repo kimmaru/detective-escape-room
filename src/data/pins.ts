@@ -6,6 +6,7 @@ export interface ReviewData {
   content: string;
   photo?: string | null;
   createdAt: number;
+  hidden?: boolean;
 }
 
 export interface PlayerSession {

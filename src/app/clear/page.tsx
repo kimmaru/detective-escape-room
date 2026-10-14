@@ -58,19 +58,56 @@ export default function ClearPage() {
   const hasFiredConfetti = useRef(false);
   const isFetchingBoardRef = useRef(false);
 
-  // 게시판 후기 목록 불러오기 (중복 호출 차단 및 안정화)
+  // 게시판 후기 목록 불러오기 (새로고침 안정화 및 세션 동기화)
   const loadBoardReviews = useCallback(async (pinToUse?: string) => {
-    const activePin = pinToUse || session?.pin;
-    if (!activePin || isFetchingBoardRef.current) return;
+    let activePin = pinToUse || session?.pin;
+    if (!activePin && typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("escape_session");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          activePin = parsed.pin;
+        }
+      } catch {}
+    }
+    if (!activePin) return;
 
+    if (isFetchingBoardRef.current) return;
     isFetchingBoardRef.current = true;
     setIsLoadingBoard(true);
     setBoardError(null);
 
+    // 로컬 스토리지에 등록된 내 후기가 있다면 백그라운드에서 서버와 즉시 동기화
+    try {
+      const saved = typeof window !== "undefined" ? localStorage.getItem("escape_session") : null;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.review) {
+          fetch("/api/game/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pin: activePin,
+              isCleared: true,
+              currentRoom: 11,
+              hasReviewed: true,
+              review: parsed.review,
+            }),
+          }).catch(() => {});
+        }
+      }
+    } catch {}
+
     try {
       const res = await fetch(
         `/api/review?pin=${encodeURIComponent(activePin)}&cleared=true&t=${Date.now()}`,
-        { cache: "no-store" }
+        {
+          cache: "no-store",
+          headers: {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            Pragma: "no-cache",
+          },
+        }
       );
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -136,7 +173,7 @@ export default function ClearPage() {
       }
       setIsAuthChecking(false);
 
-      // 서버리스 람다에 세션 클리어 상태 1회 동기화 (백그라운드)
+      // 서버리스 람다에 세션 클리어 상태 및 기존 후기 동기화 (백그라운드)
       fetch("/api/game/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -148,6 +185,8 @@ export default function ClearPage() {
           totalTimeSeconds: parsed.totalTimeSeconds || 0,
           totalHintsUsed: parsed.totalHintsUsed || 0,
           nickname: parsed.nickname,
+          hasReviewed: parsed.hasReviewed,
+          review: parsed.review,
         }),
       }).catch(() => {});
 
@@ -288,7 +327,7 @@ export default function ClearPage() {
     e.preventDefault();
 
     if (hasReviewed) {
-      alert("이미 후기를 등록하셨습니다. 후기는 1회만 등록 가능합니다.");
+      alert("이미 소중한 후기를 등록해주셨습니다! 감사합니다.");
       setIsReviewModalOpen(false);
       return;
     }
@@ -569,7 +608,7 @@ export default function ClearPage() {
                 type="button"
                 onClick={() => {
                   if (hasReviewed) {
-                    alert("소중한 수사 후기를 이미 등록해주셨습니다! (1인 1회 한정)");
+                    alert("소중한 수사 후기를 이미 등록해주셨습니다! 감사합니다.");
                     return;
                   }
                   setIsReviewModalOpen(true);
@@ -584,7 +623,7 @@ export default function ClearPage() {
                   <>
                     <CheckCircle2 className="w-5 h-5 text-emerald-400" />
                     <span className="tracking-tight text-emerald-300 font-bold text-sm">
-                      수사 후기 등록 완료 ✓ (수정 불가)
+                      수사 후기 등록 완료 ✓
                     </span>
                   </>
                 ) : (
@@ -599,14 +638,9 @@ export default function ClearPage() {
               </button>
             </div>
 
-            {!hasReviewed ? (
+            {!hasReviewed && (
               <p className="mt-2 text-[11px] text-amber-300/90 font-semibold flex items-center gap-1 drop-shadow">
-                <span>🏆 작성된 후기는 클리어 전용 탐정 일지에 영구 보존됩니다! (1회 제한)</span>
-              </p>
-            ) : (
-              <p className="mt-2 text-[11px] text-stone-400 font-medium flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                <span>1회 등록이 완료되었습니다. 감사합니다!</span>
+                <span>🏆 작성된 후기는 클리어 전용 탐정 일지에 보관됩니다!</span>
               </p>
             )}
           </div>
@@ -668,7 +702,7 @@ export default function ClearPage() {
                     사건 해결 후기 남기기
                   </h2>
                   <p className="text-[11px] text-amber-400/90 font-medium">
-                    ⚠️ 1인당 1회만 등록 가능하며, 등록 후 수정할 수 없습니다.
+                    소중한 사건 해결 후기와 사진을 남겨주세요.
                   </p>
                 </div>
               </div>
@@ -772,7 +806,7 @@ export default function ClearPage() {
                 <textarea
                   value={reviewText}
                   onChange={(e) => setReviewText(e.target.value)}
-                  placeholder="방탈출은 어떠셨나요? 재미있었던 순간이나 감상을 자유롭게 남겨주세요! (등록 후에는 수정할 수 없습니다)"
+                  placeholder="방탈출은 어떠셨나요? 재미있었던 순간이나 감상을 자유롭게 남겨주세요!"
                   rows={4}
                   required
                   maxLength={1000}
@@ -812,7 +846,7 @@ export default function ClearPage() {
                   ) : (
                     <>
                       <Check className="w-4 h-4 stroke-[3]" />
-                      <span>후기 등록 완료 (1회 한정)</span>
+                      <span>후기 등록 완료</span>
                     </>
                   )}
                 </button>
@@ -1020,10 +1054,11 @@ export default function ClearPage() {
         </div>
       )}
 
-      {/* 사진 라이트박스 */}
+      {/* 사진 라이트박스 (게시판 모달보다 최상단에 안정적으로 렌더링) */}
       {lightboxPhoto && (
         <div
-          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md animate-fadeIn"
+          className="fixed inset-0 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md animate-fadeIn"
+          style={{ zIndex: 100 }}
           onClick={() => setLightboxPhoto(null)}
         >
           <div
@@ -1033,7 +1068,7 @@ export default function ClearPage() {
             <button
               type="button"
               onClick={() => setLightboxPhoto(null)}
-              className="absolute -top-11 right-0 p-2 rounded-full bg-stone-900 text-stone-300 hover:text-white border border-stone-700 transition"
+              className="absolute -top-11 right-0 p-2 rounded-full bg-stone-900 text-stone-300 hover:text-white border border-stone-700 transition cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>

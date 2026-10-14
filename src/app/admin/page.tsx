@@ -16,7 +16,21 @@ import {
   CheckCircle,
   Lightbulb,
   LogOut,
+  Eye,
+  EyeOff,
+  MessageSquare,
+  Image as ImageIcon,
+  X,
 } from "lucide-react";
+
+interface AdminReview {
+  pin: string;
+  name: string;
+  content: string;
+  photo?: string | null;
+  createdAt: number;
+  hidden?: boolean;
+}
 
 interface AdminUser {
   pin: string;
@@ -39,6 +53,9 @@ interface StatsData {
   activeCount: number;
   clearedCount: number;
   avgClearSeconds: number;
+  totalReviews?: number;
+  hiddenReviews?: number;
+  reviews?: AdminReview[];
   roomDistribution: Record<string, number>;
   bottlenecks: number[];
   users: AdminUser[];
@@ -108,6 +125,10 @@ export default function AdminPage() {
     setAdminKey("");
   };
 
+  const [reviewFilter, setReviewFilter] = useState<"all" | "visible" | "hidden">("all");
+  const [reviewSearch, setReviewSearch] = useState<string>("");
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+
   const handleAction = async (action: "pass" | "reset", pin?: string) => {
     if (action === "reset" && !pin) {
       if (!confirm("⚠️ 주의: 전체 100명 참가자의 진행 상태를 초기화하시겠습니까?")) {
@@ -128,6 +149,31 @@ export default function AdminPage() {
         fetchStats();
       } else {
         alert(data.error || "작업에 실패했습니다.");
+      }
+    } catch {
+      alert("서버 통신 실패");
+    }
+  };
+
+  const handleToggleReview = async (pin: string, hide: boolean) => {
+    try {
+      const res = await fetch("/api/admin/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "toggleReview",
+          pin,
+          hide,
+          adminKey,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setActionMsg(data.message || `${pin}번 후기 상태 변경 완료`);
+        setTimeout(() => setActionMsg(null), 3000);
+        fetchStats();
+      } else {
+        alert(data.error || "후기 상태 변경 실패");
       }
     } catch {
       alert("서버 통신 실패");
@@ -297,8 +343,8 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* Key Metrics Cards - Desktop 5-Columns Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3.5 mb-6">
+        {/* Key Metrics Cards - Desktop 6-Columns Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3.5 mb-6">
           <div className="p-4 lg:p-5 rounded-2xl bg-[#1d1714] border border-stone-800 shadow-md">
             <div className="flex items-center gap-2 text-stone-400 text-xs mb-1.5">
               <Users className="w-4 h-4 text-amber-500" />
@@ -343,6 +389,22 @@ export default function AdminPage() {
 
           <div className="p-4 lg:p-5 rounded-2xl bg-[#1d1714] border border-stone-800 shadow-md">
             <div className="flex items-center gap-2 text-stone-400 text-xs mb-1.5">
+              <MessageSquare className="w-4 h-4 text-amber-400" />
+              <span className="font-semibold">등록된 수사 후기</span>
+            </div>
+            <div className="text-3xl font-black font-mono text-amber-400 tracking-tight">
+              {stats?.totalReviews ?? 0}
+              <span className="text-xs font-mono font-medium text-stone-400 ml-1.5">건</span>
+            </div>
+            <div className="mt-2 text-[11px] text-stone-400 font-mono flex items-center gap-1.5">
+              <span className="text-emerald-400 font-bold">노출 {(stats?.totalReviews || 0) - (stats?.hiddenReviews || 0)}</span>
+              <span>/</span>
+              <span className="text-red-400 font-bold">숨김 {stats?.hiddenReviews || 0}</span>
+            </div>
+          </div>
+
+          <div className="p-4 lg:p-5 rounded-2xl bg-[#1d1714] border border-stone-800 shadow-md">
+            <div className="flex items-center gap-2 text-stone-400 text-xs mb-1.5">
               <Clock className="w-4 h-4 text-amber-400" />
               <span className="font-semibold">평균 클리어 소요 시간</span>
             </div>
@@ -354,7 +416,7 @@ export default function AdminPage() {
             </div>
           </div>
 
-          <div className="p-4 lg:p-5 rounded-2xl bg-[#1d1714] border border-stone-800 shadow-md col-span-2 md:col-span-1">
+          <div className="p-4 lg:p-5 rounded-2xl bg-[#1d1714] border border-stone-800 shadow-md">
             <div className="flex items-center gap-2 text-stone-400 text-xs mb-1.5">
               <Lightbulb className="w-4 h-4 text-yellow-400" />
               <span className="font-semibold">총 힌트 사용 건수</span>
@@ -478,6 +540,200 @@ export default function AdminPage() {
               </span>
             </div>
           )}
+        </section>
+
+        {/* Review Management Section */}
+        <section className="mb-6 p-5 lg:p-6 rounded-3xl bg-[#1b1613] border border-stone-800 shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-stone-800/80 mb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                <MessageSquare className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base lg:text-lg font-black text-stone-100 tracking-tight">
+                    수사 후기 관리 및 게시판 노출 제어
+                  </h2>
+                  <span className="px-2.5 py-0.5 rounded-full bg-stone-800 text-amber-400 text-xs font-mono font-bold">
+                    총 {stats?.totalReviews || 0}건
+                  </span>
+                </div>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  비밀 후기 게시판에 등록된 참가자 후기를 확인하고, 원치 않는 후기를 즉시 숨기거나 다시 노출할 수 있습니다.
+                </p>
+              </div>
+            </div>
+
+            {/* Filter buttons & search */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-[180px]">
+                <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={reviewSearch}
+                  onChange={(e) => setReviewSearch(e.target.value)}
+                  placeholder="작성자 또는 PIN 검색"
+                  className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-stone-900 border border-stone-700 text-xs text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 font-medium"
+                />
+              </div>
+
+              <div className="flex rounded-xl bg-stone-900 p-1 border border-stone-800 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setReviewFilter("all")}
+                  className={`px-3 py-1 rounded-lg transition cursor-pointer ${
+                    reviewFilter === "all" ? "bg-amber-600 text-stone-950 font-black" : "text-stone-400 hover:text-stone-200"
+                  }`}
+                >
+                  전체 ({stats?.totalReviews || 0})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReviewFilter("visible")}
+                  className={`px-3 py-1 rounded-lg transition cursor-pointer ${
+                    reviewFilter === "visible" ? "bg-emerald-600 text-stone-950 font-black" : "text-stone-400 hover:text-stone-200"
+                  }`}
+                >
+                  노출 중 ({(stats?.totalReviews || 0) - (stats?.hiddenReviews || 0)})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReviewFilter("hidden")}
+                  className={`px-3 py-1 rounded-lg transition cursor-pointer ${
+                    reviewFilter === "hidden" ? "bg-red-600 text-white font-black" : "text-stone-400 hover:text-stone-200"
+                  }`}
+                >
+                  숨김 ({stats?.hiddenReviews || 0})
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Review List Grid */}
+          {(() => {
+            const list = (stats?.reviews || []).filter((r) => {
+              if (reviewFilter === "visible" && r.hidden) return false;
+              if (reviewFilter === "hidden" && !r.hidden) return false;
+              if (reviewSearch) {
+                const q = reviewSearch.toLowerCase();
+                const matchPin = r.pin?.toLowerCase().includes(q);
+                const matchName = r.name?.toLowerCase().includes(q);
+                const matchContent = r.content?.toLowerCase().includes(q);
+                return matchPin || matchName || matchContent;
+              }
+              return true;
+            });
+
+            if (list.length === 0) {
+              return (
+                <div className="py-10 text-center text-stone-500 text-xs rounded-2xl bg-[#161210] border border-stone-800/80">
+                  {stats?.reviews && stats.reviews.length > 0
+                    ? "선택한 조건에 맞는 후기가 없습니다."
+                    : "아직 등록된 수사 후기가 없습니다."}
+                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 max-h-[500px] overflow-y-auto pr-1">
+                {list.map((r) => {
+                  const isHidden = !!r.hidden;
+                  return (
+                    <div
+                      key={r.pin}
+                      className={`p-4 rounded-2xl border transition flex flex-col justify-between ${
+                        isHidden
+                          ? "bg-[#181412]/80 border-red-900/40 opacity-75"
+                          : "bg-[#221b17] border-stone-800 hover:border-amber-700/60"
+                      }`}
+                    >
+                      <div>
+                        {/* Card Top */}
+                        <div className="flex items-start justify-between gap-2 mb-2.5 pb-2 border-b border-stone-800/80">
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="px-2 py-0.5 rounded bg-stone-900 font-mono font-bold text-amber-400 text-[11px] border border-stone-700">
+                                {r.pin}
+                              </span>
+                              <span className="font-bold text-sm text-stone-100">
+                                {r.name}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-stone-500 font-mono mt-0.5 block">
+                              {r.createdAt ? new Date(r.createdAt).toLocaleString("ko-KR") : "-"}
+                            </span>
+                          </div>
+
+                          {isHidden ? (
+                            <span className="px-2 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-800 text-[10px] font-bold flex items-center gap-1 shrink-0">
+                              <EyeOff className="w-3 h-3" />
+                              <span>게시판 숨김됨</span>
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold flex items-center gap-1 shrink-0">
+                              <Eye className="w-3 h-3" />
+                              <span>게시판 노출 중</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Photo thumbnail if exists */}
+                        {r.photo && (
+                          <div
+                            className="relative mb-2.5 rounded-xl overflow-hidden border border-amber-600/30 bg-stone-950 h-32 group cursor-pointer"
+                            onClick={() => setPreviewPhoto(r.photo || null)}
+                          >
+                            <img
+                              src={r.photo}
+                              alt={`${r.name} 사진`}
+                              className="w-full h-full object-cover group-hover:scale-105 transition"
+                            />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-[11px] font-bold text-stone-200 gap-1">
+                              <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+                              <span>사진 크게보기</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Content text */}
+                        <p className="text-xs text-stone-300 leading-relaxed whitespace-pre-wrap line-clamp-4 font-medium mb-3">
+                          {r.content}
+                        </p>
+                      </div>
+
+                      {/* Card Action Button */}
+                      <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between">
+                        <span className="text-[10px] text-stone-500">
+                          {isHidden ? "게시판에서 숨겨진 상태입니다" : "클리어 유저에게 노출 중입니다"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleReview(r.pin, isHidden)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                            isHidden
+                              ? "bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 border border-emerald-600"
+                              : "bg-red-950/90 hover:bg-red-900 text-red-200 border border-red-700"
+                          }`}
+                        >
+                          {isHidden ? (
+                            <>
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>게시판에 노출하기</span>
+                            </>
+                          ) : (
+                            <>
+                              <EyeOff className="w-3.5 h-3.5" />
+                              <span>게시판에서 숨기기</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </section>
 
         {/* Participant Table Controls & List - Full Desktop Table */}
@@ -651,6 +907,35 @@ export default function AdminPage() {
           </div>
         </section>
       </div>
+
+      {/* 관리자 후기 사진 확대 모달 */}
+      {previewPhoto && (
+        <div
+          className="fixed inset-0 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md animate-fadeIn"
+          style={{ zIndex: 100 }}
+          onClick={() => setPreviewPhoto(null)}
+        >
+          <div
+            className="relative max-w-lg w-full max-h-[90vh] flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewPhoto(null)}
+              className="absolute -top-11 right-0 p-2 rounded-full bg-stone-900 text-stone-300 hover:text-white border border-stone-700 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="relative w-full rounded-2xl overflow-hidden border-2 border-amber-500/60 shadow-2xl bg-stone-950 flex items-center justify-center">
+              <img
+                src={previewPhoto}
+                alt="확대된 인증 사진"
+                className="w-full max-h-[75vh] object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

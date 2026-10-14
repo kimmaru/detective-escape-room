@@ -280,6 +280,7 @@ export default function PlayPage() {
           type: "error",
           text: data.message || "오답입니다! 단서를 다시 확인해보세요.",
         });
+        setAnswerInput("");
         setTimeout(() => setIsShaking(false), 500);
         setTimeout(() => {
           setAnswerFeedbackOverlay(null);
