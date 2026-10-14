@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   Award,
@@ -56,36 +55,50 @@ export default function ClearPage() {
   const [lightboxPhoto, setLightboxPhoto] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const hasFiredConfetti = useRef(false);
+  const isFetchingBoardRef = useRef(false);
 
-  // 게시판 후기 목록 불러오기 (클리어한 사용자 PIN 기반)
+  // 게시판 후기 목록 불러오기 (중복 호출 차단 및 안정화)
   const loadBoardReviews = useCallback(async (pinToUse?: string) => {
     const activePin = pinToUse || session?.pin;
-    if (!activePin) return;
+    if (!activePin || isFetchingBoardRef.current) return;
 
+    isFetchingBoardRef.current = true;
     setIsLoadingBoard(true);
     setBoardError(null);
+
     try {
-      const res = await fetch(`/api/review?pin=${encodeURIComponent(activePin)}&cleared=true&t=${Date.now()}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/review?pin=${encodeURIComponent(activePin)}&cleared=true&t=${Date.now()}`,
+        { cache: "no-store" }
+      );
       const data = await res.json();
       if (!res.ok || !data.success) {
         setBoardError(data.message || "후기 게시판을 불러오지 못했습니다.");
         return;
       }
-      let list: ReviewItem[] = data.reviews || [];
-      // 로컬에 등록된 내 후기가 서버 목록에 아직 캐시되지 않은 경우 합성
-      if (session?.review && !list.some((r) => r.pin === activePin)) {
-        list.unshift({
-          pin: activePin,
-          name: session.review.name || session.nickname,
-          content: session.review.content,
-          photo: session.review.photo,
-          createdAt: session.review.createdAt,
-        });
-      }
+
+      let list: ReviewItem[] = Array.isArray(data.reviews) ? data.reviews : [];
+
+      // 현재 내 후기가 로컬스토리지에 있는데 서버 목록에 아직 없으면 맨 앞에 합성
+      try {
+        const saved = localStorage.getItem("escape_session");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.review && !list.some((r) => r.pin === activePin)) {
+            list.unshift({
+              pin: activePin,
+              name: parsed.review.name || parsed.nickname || "명탐정",
+              content: parsed.review.content,
+              photo: parsed.review.photo,
+              createdAt: parsed.review.createdAt || Date.now(),
+            });
+          }
+        }
+      } catch {}
+
       setBoardReviews(list);
-      if (data.hasReviewed || session?.hasReviewed) {
+      if (data.hasReviewed) {
         setHasReviewed(true);
       }
     } catch (e) {
@@ -93,9 +106,11 @@ export default function ClearPage() {
       setBoardError("후기 목록을 불러오는 중 네트워크 오류가 발생했습니다.");
     } finally {
       setIsLoadingBoard(false);
+      isFetchingBoardRef.current = false;
     }
-  }, [session?.pin, session?.review, session?.hasReviewed, session?.nickname]);
+  }, [session?.pin]);
 
+  // 페이지 마운트 시 단 1회만 초기화 실행
   useEffect(() => {
     let activePin = "";
     try {
@@ -106,10 +121,11 @@ export default function ClearPage() {
       }
       const parsed = JSON.parse(saved);
       if (!parsed.pin || (!parsed.isCleared && parsed.currentRoom <= 10)) {
-        // Not authenticated or not cleared yet -> redirect to home
         router.replace("/");
         return;
       }
+
+      // 클라이언트 세션 확정 로드
       setSession(parsed);
       activePin = parsed.pin;
       if (parsed.hasReviewed) {
@@ -120,7 +136,7 @@ export default function ClearPage() {
       }
       setIsAuthChecking(false);
 
-      // 서버리스 환경: 클리어 세션을 서버에 즉시 확실히 동기화
+      // 서버리스 람다에 세션 클리어 상태 1회 동기화 (백그라운드)
       fetch("/api/game/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -129,36 +145,35 @@ export default function ClearPage() {
           isCleared: true,
           currentRoom: 11,
           clearedAt: parsed.clearedAt || Date.now(),
-          totalTimeSeconds: parsed.totalTimeSeconds,
-          totalHintsUsed: parsed.totalHintsUsed,
+          totalTimeSeconds: parsed.totalTimeSeconds || 0,
+          totalHintsUsed: parsed.totalHintsUsed || 0,
           nickname: parsed.nickname,
         }),
       }).catch(() => {});
-    } catch (e) {
-      console.warn("Storage read failed:", e);
-      router.replace("/");
-      return;
-    }
 
-    // Sync latest state from server to guarantee totalTimeSeconds and totalHintsUsed
-    if (activePin) {
+      // 최신 서버 상태 조회 (로컬의 소요 시간 및 클리어 상태 절대 보존)
       fetch(`/api/game/state?pin=${activePin}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (data && data.session) {
             setSession((prev: any) => {
               const merged = { ...prev, ...data.session };
-              // 클라이언트의 isCleared: true 상태 절대 보존
+              // 로컬의 유효한 값들을 최우선 보존
               merged.isCleared = true;
               merged.currentRoom = Math.max(11, merged.currentRoom || 11);
-              if (!merged.totalTimeSeconds && merged.startedAt && merged.clearedAt) {
-                merged.totalTimeSeconds = Math.max(1, Math.floor((merged.clearedAt - merged.startedAt) / 1000));
-              }
-              if (merged.hasReviewed || prev?.hasReviewed) {
+              merged.totalTimeSeconds =
+                prev?.totalTimeSeconds ||
+                data.session.totalTimeSeconds ||
+                (merged.startedAt && merged.clearedAt
+                  ? Math.max(1, Math.floor((merged.clearedAt - merged.startedAt) / 1000))
+                  : 0);
+
+              if (prev?.hasReviewed || merged.hasReviewed) {
+                merged.hasReviewed = true;
                 setHasReviewed(true);
               }
-              if (merged.nickname && !reviewerName) {
-                setReviewerName(merged.nickname);
+              if (prev?.review) {
+                merged.review = prev.review;
               }
               try {
                 localStorage.setItem("escape_session", JSON.stringify(merged));
@@ -169,45 +184,58 @@ export default function ClearPage() {
         })
         .catch(() => {});
 
-      // 클리어한 사람이므로 백그라운드에서 후기 게시판 사전 로드
+      // 게시판 1회 사전 로드
       loadBoardReviews(activePin);
+    } catch (e) {
+      console.warn("Storage read failed:", e);
+      router.replace("/");
+      return;
     }
 
-    // Trigger celebratory confetti cannon
-    const duration = 3.5 * 1000;
-    const end = Date.now() + duration;
+    // 마운트 시 단 1회만 축하 컨페티 실행 (3초 후 완전히 자동 종료)
+    if (!hasFiredConfetti.current) {
+      hasFiredConfetti.current = true;
+      const duration = 2.5 * 1000;
+      const end = Date.now() + duration;
 
-    const frame = () => {
-      confetti({
-        particleCount: 3,
-        angle: 60,
-        spread: 55,
-        origin: { x: 0 },
-        colors: ["#f59e0b", "#d97706", "#fbbf24", "#ffffff"],
-      });
-      confetti({
-        particleCount: 3,
-        angle: 120,
-        spread: 55,
-        origin: { x: 1 },
-        colors: ["#f59e0b", "#d97706", "#fbbf24", "#ffffff"],
-      });
+      const frame = () => {
+        try {
+          confetti({
+            particleCount: 2,
+            angle: 60,
+            spread: 45,
+            origin: { x: 0, y: 0.7 },
+            colors: ["#f59e0b", "#d97706", "#fbbf24", "#ffffff"],
+            disableForReducedMotion: true,
+          });
+          confetti({
+            particleCount: 2,
+            angle: 120,
+            spread: 45,
+            origin: { x: 1, y: 0.7 },
+            colors: ["#f59e0b", "#d97706", "#fbbf24", "#ffffff"],
+            disableForReducedMotion: true,
+          });
+        } catch {}
 
-      if (Date.now() < end) {
-        requestAnimationFrame(frame);
-      }
-    };
-    frame();
-  }, [router, loadBoardReviews]);
+        if (Date.now() < end) {
+          requestAnimationFrame(frame);
+        }
+      };
+      frame();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleOpenReward = () => {
     setIsRewardOpen(true);
     try {
       confetti({
-        particleCount: 50,
-        spread: 90,
+        particleCount: 35,
+        spread: 80,
         origin: { y: 0.5 },
         colors: ["#f59e0b", "#d97706", "#fbbf24", "#ffffff", "#10b981"],
+        disableForReducedMotion: true,
       });
     } catch {}
   };
@@ -222,7 +250,6 @@ export default function ClearPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // 모바일 고화질 이미지 브라우저 단에서 800px 크기로 압축 및 리사이징
     const reader = new FileReader();
     reader.onload = (loadEvent) => {
       const img = new window.Image();
@@ -311,7 +338,6 @@ export default function ClearPage() {
 
       const data = await res.json();
       if (!res.ok || !data.success) {
-        // 이미 등록된 경우 완료 상태로 전환
         if (data?.message?.includes("이미 후기")) {
           setHasReviewed(true);
           setIsReviewModalOpen(false);
@@ -320,8 +346,7 @@ export default function ClearPage() {
           return;
         }
 
-        // 서버 일시적 에러 시에도 구글 시트 백업이 전송되었으므로 로컬 세션에 확정 기록
-        console.warn("Server review response error, applying local fallback:", data?.message);
+        // 로컬 백업 완료 처리
         const fallbackReview = {
           name: reviewerName.trim(),
           content: reviewText.trim(),
@@ -340,7 +365,7 @@ export default function ClearPage() {
         } catch {}
         setIsReviewModalOpen(false);
         loadBoardReviews(session?.pin);
-        alert("소중한 후기와 사진이 성공적으로 등록되었습니다! 후기 게시판에 반영되었습니다. 🎉");
+        alert("소중한 후기와 사진이 성공적으로 등록되었습니다! 🎉");
         return;
       }
 
@@ -356,19 +381,19 @@ export default function ClearPage() {
       } catch {}
 
       setIsReviewModalOpen(false);
-      // 게시판 새로고침
       loadBoardReviews(session?.pin);
 
       try {
         confetti({
-          particleCount: 70,
-          spread: 80,
+          particleCount: 50,
+          spread: 70,
           origin: { y: 0.6 },
           colors: ["#10b981", "#f59e0b", "#3b82f6", "#ffffff"],
+          disableForReducedMotion: true,
         });
       } catch {}
 
-      alert("소중한 후기와 사진이 성공적으로 등록되었습니다! 후기 게시판에 반영되었습니다. 🎉");
+      alert("소중한 후기와 사진이 성공적으로 등록되었습니다! 🎉");
     } catch (err) {
       console.error("Submit review error:", err);
       const fallbackReview = {
@@ -438,20 +463,19 @@ export default function ClearPage() {
 
   return (
     <div className="relative flex flex-col flex-1 min-h-[100dvh] max-w-md mx-auto w-full bg-[#161311] text-stone-100 select-none overflow-x-hidden shadow-2xl">
-      {/* Background watermark */}
-      <div className="absolute inset-0 z-0">
-        <Image
+      {/* Background watermark: 안정적인 img 태그 및 고정 z-index */}
+      <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
+        <img
+          key="clear-bg-fixed"
           src="/images/Clear_Background.png"
           alt="클리어 배경"
-          fill
-          priority
-          className="object-cover object-center opacity-30"
+          className="w-full h-full object-cover object-center opacity-30"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#141110] via-[#141110]/80 to-[#141110]/60" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#141110] via-[#141110]/85 to-[#141110]/60" />
       </div>
 
       <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-6 text-center max-w-sm mx-auto w-full pb-10">
-        {/* Interactive Gift Box Badge (선물상자 아이콘 클릭 시 전체화면 Clear 이미지 등장) */}
+        {/* Interactive Gift Box Badge */}
         <div className="relative mb-6">
           <button
             type="button"
@@ -523,7 +547,6 @@ export default function ClearPage() {
           {/* 후기 남기기 섹션 (1회만 작성 가능, 수정 불가) */}
           <div className="relative w-full flex flex-col items-center">
             {!hasReviewed && (
-              /* 통통 튀는 인터랙티브 유도 말풍선 배지 */
               <div
                 className="relative mb-2 animate-bounce z-10 cursor-pointer"
                 onClick={() => setIsReviewModalOpen(true)}
@@ -532,7 +555,6 @@ export default function ClearPage() {
                   <Sparkles className="w-3.5 h-3.5 animate-spin" />
                   <span>📸 10초 만에 인증샷 & 수사 후기 남기기!</span>
                 </div>
-                {/* 말풍선 꼬리 */}
                 <div className="w-0 h-0 border-x-4 border-x-transparent border-t-[5px] border-t-amber-500 mx-auto -mt-[1px]" />
               </div>
             )}
@@ -589,7 +611,7 @@ export default function ClearPage() {
             )}
           </div>
 
-          {/* 클리어 전용: 명탐정 수사 후기 게시판 열기 버튼 */}
+          {/* 명탐정 수사 후기 게시판 열기 버튼 */}
           <div className="relative w-full pt-1">
             <button
               type="button"
@@ -631,7 +653,7 @@ export default function ClearPage() {
         </div>
       </div>
 
-      {/* 후기 남기기 모달 (1회만 작성 가능) */}
+      {/* 후기 남기기 모달 */}
       {isReviewModalOpen && !hasReviewed && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
           <div className="relative max-w-md w-full bg-[#1e1814] border-2 border-amber-600/60 rounded-3xl p-6 text-stone-100 shadow-[0_0_50px_rgba(0,0,0,0.8)] max-h-[92vh] overflow-y-auto">
@@ -677,7 +699,7 @@ export default function ClearPage() {
                 />
               </div>
 
-              {/* 2. 사진 (선택 - 전면 셀카 카메라 연동) */}
+              {/* 2. 사진 (선택) */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-bold text-amber-300 flex items-center gap-1">
@@ -761,7 +783,6 @@ export default function ClearPage() {
                 </div>
               </div>
 
-              {/* Error Message */}
               {errorMessage && (
                 <div className="p-2.5 rounded-xl bg-red-950/70 border border-red-800 text-xs text-red-300 font-semibold">
                   {errorMessage}
@@ -786,7 +807,7 @@ export default function ClearPage() {
                   {isSubmittingReview ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>기록 중 (약 2초 소요)...</span>
+                      <span>기록 중...</span>
                     </>
                   ) : (
                     <>
@@ -801,10 +822,10 @@ export default function ClearPage() {
         </div>
       )}
 
-      {/* 명탐정 수사 후기 게시판 모달 (클리어한 사람만 열람 가능) */}
+      {/* 명탐정 수사 후기 게시판 모달 */}
       {isBoardOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-md animate-fadeIn">
-          <div className="relative max-w-lg w-full h-[90vh] bg-[#1a1512] border-2 border-amber-600/70 rounded-3xl p-5 sm:p-6 text-stone-100 shadow-[0_0_60px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden">
+          <div className="relative max-w-lg w-full h-[88vh] bg-[#1a1512] border-2 border-amber-600/70 rounded-3xl p-5 sm:p-6 text-stone-100 shadow-[0_0_60px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden">
             {/* Header */}
             <div className="flex items-center justify-between pb-3.5 border-b border-stone-800 shrink-0">
               <div className="flex items-center gap-2.5">
@@ -847,7 +868,7 @@ export default function ClearPage() {
               </div>
             </div>
 
-            {/* Sub Bar (통계 & 내 후기 상태) */}
+            {/* Sub Bar */}
             <div className="py-2.5 px-3 my-3 rounded-xl bg-stone-900/90 border border-stone-800 flex items-center justify-between shrink-0 text-xs">
               <span className="text-stone-300 font-semibold">
                 총 <strong className="text-amber-400 font-mono font-bold text-sm">{boardReviews.length}</strong>개의 수사 일지
@@ -955,13 +976,13 @@ export default function ClearPage() {
                         </span>
                       </div>
 
-                      {/* Photo Thumbnail if present */}
+                      {/* Photo Thumbnail */}
                       {item.photo && (
-                        <div className="relative mb-3 rounded-xl overflow-hidden border border-amber-500/30 bg-stone-950 group">
+                        <div className="relative mb-3 rounded-xl overflow-hidden border border-amber-500/30 bg-stone-950">
                           <img
                             src={item.photo}
                             alt={`${item.name}님의 인증 사진`}
-                            className="w-full max-h-56 object-cover cursor-pointer hover:scale-[1.02] transition duration-300"
+                            className="w-full max-h-52 object-cover cursor-pointer hover:scale-[1.02] transition duration-300"
                             onClick={() => setLightboxPhoto(item.photo || null)}
                           />
                           <button
@@ -999,7 +1020,7 @@ export default function ClearPage() {
         </div>
       )}
 
-      {/* 사진 전체화면 확대 라이트박스 */}
+      {/* 사진 라이트박스 */}
       {lightboxPhoto && (
         <div
           className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md animate-fadeIn"
@@ -1020,19 +1041,19 @@ export default function ClearPage() {
               <img
                 src={lightboxPhoto}
                 alt="확대된 인증 사진"
-                className="w-full max-h-[80vh] object-contain"
+                className="w-full max-h-[75vh] object-contain"
               />
             </div>
           </div>
         </div>
       )}
 
-      {/* Fullscreen Clear Image "짜잔!" Modal (선물상자 클릭 시 등장) */}
+      {/* 보상 이미지 모달 (직접적이고 안정적인 렌더링) */}
       {isRewardOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/95 backdrop-blur-md animate-fadeIn">
-          <div className="relative max-w-lg w-full h-[90vh] flex flex-col items-center justify-between">
-            {/* Top Close Button */}
-            <div className="w-full flex items-center justify-between pb-2 text-stone-300">
+          <div className="relative max-w-md w-full max-h-[92vh] flex flex-col items-center justify-between bg-[#191411] border-2 border-amber-500/70 rounded-3xl p-4 shadow-[0_0_60px_rgba(245,158,11,0.4)]">
+            {/* Top Bar */}
+            <div className="w-full flex items-center justify-between pb-3 border-b border-stone-800 text-stone-300 shrink-0">
               <span className="text-xs font-mono font-bold text-amber-400 flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4" />
                 <span>SPECIAL CLEAR REWARD</span>
@@ -1040,20 +1061,18 @@ export default function ClearPage() {
               <button
                 type="button"
                 onClick={() => setIsRewardOpen(false)}
-                className="p-1.5 rounded-full bg-stone-900/90 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-700 shadow-xl transition"
+                className="p-1.5 rounded-full bg-stone-900/90 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-700 shadow transition"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Clear Image with Pop Animation */}
-            <div className="relative w-full flex-1 rounded-2xl overflow-hidden border-2 border-amber-500/60 shadow-[0_0_50px_rgba(245,158,11,0.4)] animate-successPop bg-[#181310] flex items-center justify-center">
-              <Image
+            {/* Clear Image: Next.js Image fill 대신 표준 img 태그로 100% 즉시 표시 보장 */}
+            <div className="relative w-full flex-1 min-h-[300px] max-h-[65vh] my-3 rounded-2xl overflow-hidden border border-amber-500/40 bg-stone-950 flex items-center justify-center p-2">
+              <img
                 src="/images/clear.png"
                 alt="사건 해결 특별 보상"
-                fill
-                priority
-                className="object-contain"
+                className="w-full h-full object-contain animate-successPop"
               />
             </div>
 
@@ -1061,7 +1080,7 @@ export default function ClearPage() {
             <button
               type="button"
               onClick={() => setIsRewardOpen(false)}
-              className="mt-3.5 w-full py-3.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 text-sm font-black shadow-lg transition active:scale-95"
+              className="w-full py-3.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 text-sm font-black shadow-lg transition active:scale-95 cursor-pointer shrink-0"
             >
               확인 완료 (닫기)
             </button>
