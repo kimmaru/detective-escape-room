@@ -77,8 +77,12 @@ export default function AdminPage() {
   const fetchStats = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/admin/stats?t=${Date.now()}`, {
+      const res = await fetch(`/api/admin/stats?_nc=${Date.now()}_${Math.random().toString(36).substring(7)}`, {
         cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+        },
       });
       const data = await res.json();
       setStats(data);

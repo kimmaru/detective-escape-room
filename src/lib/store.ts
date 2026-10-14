@@ -1,18 +1,121 @@
 import fs from "fs";
 import path from "path";
+import { put } from "@vercel/blob";
 import { PlayerSession, ReviewData, generateDefaultPins } from "../data/pins";
 import { PUZZLES } from "../data/puzzles";
 import { SEED_REVIEWS } from "../data/seedReviews";
 
 const CACHE_FILE = path.join("/tmp", "escaperoom_sessions.json");
 const REVIEWS_FILE = path.join("/tmp", "escaperoom_reviews.json");
+const HIDDEN_FILE = path.join("/tmp", "escaperoom_hidden_pins.json");
 
-export function getAllReviews(includeHidden = false): Array<ReviewData & { pin: string }> {
+const BLOB_BASE_URL =
+  process.env.BLOB_STORE_BASE_URL ||
+  "https://mak5nkc0fp7zkw4z.public.blob.vercel-storage.com";
+
+// Default hidden pins (the test reviews admin configured as hidden)
+const DEFAULT_HIDDEN_PINS = [
+  "TEST_PIN",
+  "TEST12",
+  "IMG_TEST",
+  "BIG_IMG",
+  "FAST_TEST",
+];
+
+let cachedHiddenPins: Set<string> = new Set(DEFAULT_HIDDEN_PINS);
+let lastHiddenPinsFetchAt = 0;
+
+export async function fetchHiddenPins(): Promise<Set<string>> {
+  const now = Date.now();
+  // Fetch from Blob at most every 1000ms for snappy updates across all lambdas
+  if (now - lastHiddenPinsFetchAt < 1000 && cachedHiddenPins.size > 0) {
+    return cachedHiddenPins;
+  }
+  lastHiddenPinsFetchAt = now;
+
+  try {
+    const res = await fetch(
+      `${BLOB_BASE_URL}/hidden_reviews.json?_t=${now}_${Math.random().toString(36).substring(7)}`,
+      {
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+        },
+      }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        cachedHiddenPins = new Set(data.map((p) => String(p).trim().toUpperCase()));
+        return cachedHiddenPins;
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to fetch hidden pins from Blob:", e);
+  }
+
+  // Fallback: local /tmp file
+  try {
+    if (fs.existsSync(HIDDEN_FILE)) {
+      const data = JSON.parse(fs.readFileSync(HIDDEN_FILE, "utf-8"));
+      if (Array.isArray(data)) {
+        cachedHiddenPins = new Set(data.map((p) => String(p).trim().toUpperCase()));
+      }
+    }
+  } catch {}
+
+  return cachedHiddenPins;
+}
+
+export async function saveHiddenPins(pinsSet: Set<string>): Promise<void> {
+  cachedHiddenPins = pinsSet;
+  lastHiddenPinsFetchAt = Date.now();
+  const arr = Array.from(pinsSet);
+
+  // 1. Write to local /tmp
+  try {
+    fs.writeFileSync(HIDDEN_FILE, JSON.stringify(arr, null, 2));
+  } catch {}
+
+  // 2. Write to Vercel Blob (durable across all lambdas!)
+  try {
+    await put("hidden_reviews.json", JSON.stringify(arr), {
+      access: "public",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+    });
+  } catch (e) {
+    console.error("Failed to save hidden pins to Vercel Blob:", e);
+  }
+}
+
+export async function getAllReviewsAsync(
+  includeHidden = false
+): Promise<Array<ReviewData & { pin: string }>> {
+  const hiddenPins = await fetchHiddenPins();
+  return getMergedReviews(includeHidden, hiddenPins);
+}
+
+export function getAllReviews(
+  includeHidden = false
+): Array<ReviewData & { pin: string }> {
+  return getMergedReviews(includeHidden, cachedHiddenPins);
+}
+
+function getMergedReviews(
+  includeHidden: boolean,
+  hiddenPins: Set<string>
+): Array<ReviewData & { pin: string }> {
   const reviewMap = new Map<string, ReviewData & { pin: string }>();
 
   // 1. Pre-seed default reviews from spreadsheet
   SEED_REVIEWS.forEach((r) => {
-    reviewMap.set(r.pin.toUpperCase(), { ...r, hidden: false });
+    const pinKey = r.pin.toUpperCase();
+    reviewMap.set(pinKey, {
+      ...r,
+      hidden: hiddenPins.has(pinKey),
+    });
   });
 
   // 2. Read from persistent file cache (overrides seeds with user's modifications & hidden flags)
@@ -23,7 +126,11 @@ export function getAllReviews(includeHidden = false): Array<ReviewData & { pin: 
       if (Array.isArray(parsed)) {
         parsed.forEach((r) => {
           if (r && r.pin) {
-            reviewMap.set(r.pin.toUpperCase(), r);
+            const pinKey = r.pin.toUpperCase();
+            reviewMap.set(pinKey, {
+              ...r,
+              hidden: hiddenPins.has(pinKey),
+            });
           }
         });
       }
@@ -36,16 +143,23 @@ export function getAllReviews(includeHidden = false): Array<ReviewData & { pin: 
   if (globalThis.__escapeStore?.sessions) {
     Object.values(globalThis.__escapeStore.sessions).forEach((s) => {
       const pinKey = s.pin.toUpperCase();
-      if (s.hasReviewed && s.review && !reviewMap.has(pinKey)) {
-        reviewMap.set(pinKey, { ...s.review, pin: s.pin });
+      if (s.hasReviewed && s.review) {
+        reviewMap.set(pinKey, {
+          ...s.review,
+          pin: s.pin,
+          hidden: hiddenPins.has(pinKey),
+        });
       }
     });
   }
 
   // Sort by newest first
-  const list = Array.from(reviewMap.values()).sort(
-    (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
-  );
+  const list = Array.from(reviewMap.values())
+    .map((r) => ({
+      ...r,
+      hidden: hiddenPins.has(r.pin.toUpperCase()),
+    }))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
   return includeHidden ? list : list.filter((r) => !r.hidden);
 }
@@ -68,6 +182,7 @@ export async function syncReviewsFromGoogleSheet(): Promise<void> {
     const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
     if (lines.length <= 1) return;
 
+    const hiddenPins = await fetchHiddenPins();
     const list = getAllReviews(true);
     const map = new Map<string, ReviewData & { pin: string }>();
     list.forEach((r) => map.set(r.pin.toUpperCase(), r));
@@ -118,9 +233,11 @@ export async function syncReviewsFromGoogleSheet(): Promise<void> {
             content,
             photo,
             createdAt: !isNaN(parsedDate) ? parsedDate : Date.now(),
-            hidden: false,
+            hidden: hiddenPins.has(cleanPin),
           });
           hasUpdates = true;
+        } else {
+          existing.hidden = hiddenPins.has(cleanPin);
         }
       }
     }
@@ -139,68 +256,71 @@ export async function syncReviewsFromGoogleSheet(): Promise<void> {
 function saveReviewToCache(reviewWithPin: ReviewData & { pin: string }) {
   try {
     const list = getAllReviews(true);
-    const existing = list.find(
-      (r) => r.pin.toUpperCase() === reviewWithPin.pin.toUpperCase()
-    );
-    // If existing has a hidden flag, preserve it unless explicitly provided
-    const hidden =
-      existing?.hidden !== undefined
-        ? existing.hidden
-        : (reviewWithPin.hidden ?? false);
+    const pinKey = reviewWithPin.pin.toUpperCase();
+    const isHidden = cachedHiddenPins.has(pinKey) || reviewWithPin.hidden === true;
 
     const filtered = list.filter(
-      (r) => r.pin.toUpperCase() !== reviewWithPin.pin.toUpperCase()
+      (r) => r.pin.toUpperCase() !== pinKey
     );
-    filtered.unshift({ ...reviewWithPin, hidden });
+    filtered.unshift({ ...reviewWithPin, hidden: isHidden });
     fs.writeFileSync(REVIEWS_FILE, JSON.stringify(filtered, null, 2));
   } catch (e) {
     console.error("Failed to save review to /tmp:", e);
   }
 }
 
-export function toggleReviewVisibility(
+export async function toggleReviewVisibility(
   pin: string,
   hide?: boolean
-): { success: boolean; hidden?: boolean } {
-  const cleanPin = resolvePin(pin);
-  const reviews = getAllReviews(true);
-  const target = reviews.find(
-    (r) =>
-      r.pin.toUpperCase() === cleanPin.toUpperCase() ||
-      r.pin.toUpperCase() === pin.trim().toUpperCase()
-  );
-  if (!target) {
-    return { success: false };
+): Promise<{ success: boolean; hidden?: boolean }> {
+  const cleanPin = resolvePin(pin).toUpperCase();
+  const rawPin = pin.trim().toUpperCase();
+
+  const hiddenPins = await fetchHiddenPins();
+  const isCurrentlyHidden = hiddenPins.has(cleanPin) || hiddenPins.has(rawPin);
+  const newHidden = hide !== undefined ? hide : !isCurrentlyHidden;
+
+  if (newHidden) {
+    hiddenPins.add(cleanPin);
+    hiddenPins.add(rawPin);
+  } else {
+    hiddenPins.delete(cleanPin);
+    hiddenPins.delete(rawPin);
   }
 
-  const newHidden = hide !== undefined ? hide : !target.hidden;
-  target.hidden = newHidden;
+  await saveHiddenPins(hiddenPins);
 
+  // Sync /tmp cache
   try {
-    fs.writeFileSync(REVIEWS_FILE, JSON.stringify(reviews, null, 2));
-  } catch (e) {
-    console.error("Failed to update reviews file:", e);
-  }
+    const list = getAllReviews(true);
+    fs.writeFileSync(REVIEWS_FILE, JSON.stringify(list, null, 2));
+  } catch {}
 
   const store = getStore();
   const sessionKey =
     store.sessions[cleanPin]
       ? cleanPin
       : Object.keys(store.sessions).find(
-          (k) => k.toUpperCase() === pin.trim().toUpperCase()
+          (k) => k.toUpperCase() === rawPin
         );
 
   if (sessionKey && store.sessions[sessionKey]) {
     if (store.sessions[sessionKey].review) {
       store.sessions[sessionKey].review!.hidden = newHidden;
     } else {
-      store.sessions[sessionKey].review = {
-        name: target.name,
-        content: target.content,
-        photo: target.photo,
-        createdAt: target.createdAt,
-        hidden: newHidden,
-      };
+      const reviews = getAllReviews(true);
+      const target = reviews.find(
+        (r) => r.pin.toUpperCase() === cleanPin || r.pin.toUpperCase() === rawPin
+      );
+      if (target) {
+        store.sessions[sessionKey].review = {
+          name: target.name,
+          content: target.content,
+          photo: target.photo,
+          createdAt: target.createdAt,
+          hidden: newHidden,
+        };
+      }
     }
     savePersistedSessions(store.sessions);
   }
@@ -260,14 +380,16 @@ export function resolvePin(input: string): string {
   const store = getStore();
   if (store.sessions[clean]) return clean;
 
-  // 숫자 또는 번호 입력 지원 (예: "100", "100번", "1")
-  const num = parseInt(clean.replace(/[^0-9]/g, ""), 10);
-  if (!isNaN(num) && num >= 1 && num <= 100) {
-    const padded = String(num).padStart(2, "0");
-    const found = Object.values(store.sessions).find(
-      (s) => s.nickname.endsWith(`_${num}`) || s.nickname.endsWith(`_${padded}`)
-    );
-    if (found) return found.pin;
+  // 숫자 또는 번호 입력 지원 (오직 숫자만 있거나 "10번"과 같은 형태일 때만 번호로 매핑)
+  if (/^[0-9]+번?$/i.test(input.trim())) {
+    const num = parseInt(clean.replace(/[^0-9]/g, ""), 10);
+    if (!isNaN(num) && num >= 1 && num <= 100) {
+      const padded = String(num).padStart(2, "0");
+      const found = Object.values(store.sessions).find(
+        (s) => s.nickname.endsWith(`_${num}`) || s.nickname.endsWith(`_${padded}`)
+      );
+      if (found) return found.pin;
+    }
   }
   return clean;
 }
@@ -355,8 +477,8 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
   if (clientState.hasReviewed || clientState.review) {
     session.hasReviewed = true;
     if (clientState.review) {
-      // Preserve existing hidden state if already set by admin
-      const isHidden = session.review?.hidden === true;
+      // Preserve existing hidden state if set by admin or present in cachedHiddenPins
+      const isHidden = cachedHiddenPins.has(pin.toUpperCase()) || session.review?.hidden === true;
       session.review = {
         ...session.review,
         ...clientState.review,

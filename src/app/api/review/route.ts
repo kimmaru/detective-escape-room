@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   submitReview,
   getSession,
-  getAllReviews,
+  getAllReviewsAsync,
+  fetchHiddenPins,
   syncClientSession,
   syncReviewsFromGoogleSheet,
 } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
@@ -170,9 +173,14 @@ export async function GET(req: NextRequest) {
       await syncReviewsFromGoogleSheet();
     } catch {}
 
-    const reviews = getAllReviews(false);
+    const [reviews, hiddenPins] = await Promise.all([
+      getAllReviewsAsync(false),
+      fetchHiddenPins(),
+    ]);
+
+    const isPinHidden = hiddenPins.has(session.pin.toUpperCase());
     const myReview = session.review || null;
-    const myReviewHidden = !!myReview?.hidden;
+    const myReviewHidden = isPinHidden || !!myReview?.hidden;
 
     return NextResponse.json(
       {
@@ -187,9 +195,10 @@ export async function GET(req: NextRequest) {
       },
       {
         headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0",
           Pragma: "no-cache",
           Expires: "0",
+          "Surrogate-Control": "no-store",
         },
       }
     );

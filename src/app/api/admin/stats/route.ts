@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllSessions, getAllReviews, syncReviewsFromGoogleSheet } from "@/lib/store";
+import { getAllSessions, getAllReviewsAsync, syncReviewsFromGoogleSheet } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+export const fetchCache = "force-no-store";
 
 export async function GET(req: NextRequest) {
   try {
@@ -10,7 +11,7 @@ export async function GET(req: NextRequest) {
   } catch {}
 
   const sessions = getAllSessions();
-  const reviews = getAllReviews(true);
+  const reviews = await getAllReviewsAsync(true);
   const now = Date.now();
 
   const roomDistribution: Record<string, number> = {
@@ -77,17 +78,27 @@ export async function GET(req: NextRequest) {
   const totalReviews = reviews.length;
   const hiddenReviews = reviews.filter((r) => r.hidden).length;
 
-  return NextResponse.json({
-    totalUsers: sessions.length,
-    startedCount,
-    activeCount,
-    clearedCount,
-    avgClearSeconds,
-    totalReviews,
-    hiddenReviews,
-    reviews,
-    roomDistribution,
-    bottlenecks,
-    users: sortedUsers,
-  });
+  return NextResponse.json(
+    {
+      totalUsers: sessions.length,
+      startedCount,
+      activeCount,
+      clearedCount,
+      avgClearSeconds,
+      totalReviews,
+      hiddenReviews,
+      reviews,
+      roomDistribution,
+      bottlenecks,
+      users: sortedUsers,
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0",
+        Pragma: "no-cache",
+        Expires: "0",
+        "Surrogate-Control": "no-store",
+      },
+    }
+  );
 }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { passRoomAdmin, resetSession, toggleReviewVisibility } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,15 +28,23 @@ export async function POST(req: NextRequest) {
     if (action === "toggleReview" && pin) {
       const cleanPin = String(pin).trim();
       const hideBool = typeof hide === "boolean" ? hide : undefined;
-      const res = toggleReviewVisibility(cleanPin, hideBool);
+      const res = await toggleReviewVisibility(cleanPin, hideBool);
       if (!res.success) {
         return NextResponse.json({ error: "해당 후기를 찾을 수 없습니다." }, { status: 404 });
       }
-      return NextResponse.json({
-        success: true,
-        message: `${cleanPin}번 참가자의 후기가 ${res.hidden ? "숨김" : "노출"} 처리되었습니다.`,
-        hidden: res.hidden,
-      });
+      return NextResponse.json(
+        {
+          success: true,
+          message: `${cleanPin}번 참가자의 후기가 ${res.hidden ? "숨김" : "노출"} 처리되었습니다.`,
+          hidden: res.hidden,
+        },
+        {
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+            Pragma: "no-cache",
+          },
+        }
+      );
     }
 
     return NextResponse.json({ error: "올바르지 않은 명령입니다." }, { status: 400 });

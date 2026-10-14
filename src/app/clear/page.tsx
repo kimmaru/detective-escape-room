@@ -78,8 +78,9 @@ export default function ClearPage() {
     setBoardError(null);
 
     try {
+      const cacheBuster = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
       const res = await fetch(
-        `/api/review?pin=${encodeURIComponent(activePin)}&cleared=true&t=${Date.now()}`,
+        `/api/review?pin=${encodeURIComponent(activePin)}&cleared=true&_nc=${cacheBuster}`,
         {
           cache: "no-store",
           headers: {
@@ -101,7 +102,13 @@ export default function ClearPage() {
         const saved = localStorage.getItem("escape_session");
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (parsed.review && !data.myReviewHidden && !list.some((r) => r.pin === activePin)) {
+          if (data.myReviewHidden) {
+            // 관리자가 숨김 처리한 경우 로컬 스토리지도 hidden 동기화하여 절대 게시판에 재합성되지 않도록 차단
+            if (parsed.review) {
+              parsed.review.hidden = true;
+              localStorage.setItem("escape_session", JSON.stringify(parsed));
+            }
+          } else if (parsed.review && !parsed.review.hidden && !list.some((r) => r.pin === activePin)) {
             list.unshift({
               pin: activePin,
               name: parsed.review.name || parsed.nickname || "명탐정",
