@@ -31,3 +31,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local print assets and docs
+*.docx
+test_*.docx
+password_stretched_images/
