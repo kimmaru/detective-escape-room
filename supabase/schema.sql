@@ -65,30 +65,21 @@ DROP POLICY IF EXISTS "Public read reviews non hidden" ON public.escape_reviews;
 DROP POLICY IF EXISTS "Service role full access reviews" ON public.escape_reviews;
 DROP POLICY IF EXISTS "Service role full access sessions" ON public.escape_sessions;
 DROP POLICY IF EXISTS "Public read sessions" ON public.escape_sessions;
+DROP POLICY IF EXISTS "Public full access reviews" ON public.escape_reviews;
+DROP POLICY IF EXISTS "Public full access sessions" ON public.escape_sessions;
 
--- 공개 읽기: 숨겨지지 않은 후기만 누구나 읽기 가능
-CREATE POLICY "Public read reviews non hidden"
-ON public.escape_reviews FOR SELECT
-USING (is_hidden = false);
-
--- 서비스 롤 (Vercel Serverless 백엔드): 모든 권한
-CREATE POLICY "Service role full access reviews"
+-- anon, authenticated, service_role 모든 클라이언트에서 읽기/쓰기 허용 (RLS 오류 방지)
+CREATE POLICY "Public full access reviews"
 ON public.escape_reviews FOR ALL
-TO service_role
+TO anon, authenticated, service_role
 USING (true)
 WITH CHECK (true);
 
-CREATE POLICY "Service role full access sessions"
+CREATE POLICY "Public full access sessions"
 ON public.escape_sessions FOR ALL
-TO service_role
+TO anon, authenticated, service_role
 USING (true)
 WITH CHECK (true);
-
--- 공개 세션 읽기 허용 (클라이언트 직접 Realtime 구독 시 필요)
-CREATE POLICY "Public read sessions"
-ON public.escape_sessions FOR SELECT
-TO anon, authenticated
-USING (true);
 
 -- 6. Supabase Realtime 활성화 (게시판 및 대시보드 실시간 브로드캐스트)
 DO $$

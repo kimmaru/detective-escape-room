@@ -10,6 +10,7 @@ import {
   DbSession,
   DbReview,
 } from "./supabase";
+import { getPinOrder } from "../data/pinOrder";
 
 const CACHE_FILE = path.join("/tmp", "escaperoom_sessions.json");
 const REVIEWS_FILE = path.join("/tmp", "escaperoom_reviews.json");
@@ -303,6 +304,71 @@ export async function updateSessionNickname(
 // 4. Reviews Management (Supabase SSOT + Graceful Fallback)
 // ==============================================================================
 
+let lastBlobReviewsFetchAt = 0;
+let cachedBlobReviews: Array<ReviewData & { pin: string }> = [];
+
+export async function fetchReviewsFromBlob(): Promise<Array<ReviewData & { pin: string }>> {
+  const now = Date.now();
+  if (now - lastBlobReviewsFetchAt < 1000 && cachedBlobReviews.length > 0) {
+    return cachedBlobReviews;
+  }
+  lastBlobReviewsFetchAt = now;
+
+  try {
+    const res = await fetch(
+      `${BLOB_BASE_URL}/escaperoom_reviews.json?_t=${now}_${Math.random().toString(36).substring(7)}`,
+      {
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+        },
+      }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        cachedBlobReviews = data;
+        try {
+          fs.writeFileSync(REVIEWS_FILE, JSON.stringify(data, null, 2));
+        } catch {}
+        return cachedBlobReviews;
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to fetch reviews from Vercel Blob:", e);
+  }
+
+  return cachedBlobReviews;
+}
+
+export async function saveReviewToDurableStore(
+  reviewWithPin: ReviewData & { pin: string }
+): Promise<void> {
+  const list = getAllReviews(true);
+  const pinKey = reviewWithPin.pin.toUpperCase();
+  const hiddenPins = await fetchHiddenPins();
+  const isHidden = hiddenPins.has(pinKey) || reviewWithPin.hidden === true;
+
+  const filtered = list.filter((r) => r.pin.toUpperCase() !== pinKey);
+  filtered.unshift({ ...reviewWithPin, hidden: isHidden });
+  cachedBlobReviews = filtered;
+
+  try {
+    fs.writeFileSync(REVIEWS_FILE, JSON.stringify(filtered, null, 2));
+  } catch {}
+
+  try {
+    await put("escaperoom_reviews.json", JSON.stringify(filtered), {
+      access: "public",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+    });
+  } catch (e) {
+    console.error("Failed to save review to Vercel Blob:", e);
+  }
+}
+
 export async function getAllReviewsAsync(
   includeHidden = false
 ): Promise<Array<ReviewData & { pin: string }>> {
@@ -320,15 +386,30 @@ export async function getAllReviewsAsync(
         }
 
         const { data, error } = await query;
-        if (!error && data) {
+        if (!error && data && data.length > 0) {
           return data.map((d: DbReview) => dbReviewToReviewData(d));
         }
-        console.error("Supabase getAllReviewsAsync error:", error);
+        if (error) {
+          console.error("Supabase getAllReviewsAsync error:", error);
+        }
       } catch (e) {
         console.warn("Supabase getAllReviewsAsync failed:", e);
       }
     }
   }
+
+  // Fallback 1: Vercel Blob durable storage (cross-lambda synced)
+  try {
+    const blobReviews = await fetchReviewsFromBlob();
+    if (blobReviews.length > 0) {
+      const hiddenPins = await fetchHiddenPins();
+      const list = blobReviews.map((r) => ({
+        ...r,
+        hidden: hiddenPins.has(r.pin.toUpperCase()),
+      }));
+      return includeHidden ? list : list.filter((r) => !r.hidden);
+    }
+  } catch {}
 
   const hiddenPins = await fetchHiddenPins();
   return getMergedReviews(includeHidden, hiddenPins);
@@ -630,7 +711,9 @@ function getStore(): GlobalStore {
 
 export function getAllSessions(): PlayerSession[] {
   const store = getStore();
-  return Object.values(store.sessions);
+  return Object.values(store.sessions).sort(
+    (a, b) => getPinOrder(a.pin) - getPinOrder(b.pin)
+  );
 }
 
 export async function getAllSessionsAsync(): Promise<PlayerSession[]> {
@@ -639,7 +722,7 @@ export async function getAllSessionsAsync(): Promise<PlayerSession[]> {
     if (supabase) {
       try {
         const [sessionsRes, reviewsRes] = await Promise.all([
-          supabase.from("escape_sessions").select("*").order("pin", { ascending: true }),
+          supabase.from("escape_sessions").select("*"),
           supabase.from("escape_reviews").select("*"),
         ]);
 
@@ -657,9 +740,13 @@ export async function getAllSessionsAsync(): Promise<PlayerSession[]> {
             });
           }
 
-          return sessionsRes.data.map((db: DbSession) =>
-            dbSessionToPlayerSession(db, reviewsMap.get(db.pin.trim().toUpperCase()))
+          const list = sessionsRes.data.map((db: DbSession) =>
+            dbSessionToPlayerSession(
+              db,
+              reviewsMap.get(db.pin.trim().toUpperCase())
+            )
           );
+          return list.sort((a, b) => getPinOrder(a.pin) - getPinOrder(b.pin));
         }
       } catch (e) {
         console.warn("Supabase getAllSessionsAsync failed:", e);
@@ -674,7 +761,9 @@ export async function getAllSessionsAsync(): Promise<PlayerSession[]> {
       store.sessions[pin].nickname = memo.trim();
     }
   });
-  return Object.values(store.sessions);
+  return Object.values(store.sessions).sort(
+    (a, b) => getPinOrder(a.pin) - getPinOrder(b.pin)
+  );
 }
 
 export function resolvePin(input: string): string {
@@ -1292,22 +1381,26 @@ export async function passRoomAdminAsync(
         last_active_at: now,
       };
 
+      if (!session.startedAt) {
+        updates.started_at = now;
+      }
+
       if (isCleared) {
         updates.is_cleared = true;
         updates.cleared_at = now;
         updates.status = "cleared";
         updates.current_room = 11;
-        if (session.startedAt) {
-          updates.total_time_seconds = Math.max(
-            1,
-            Math.floor((now - session.startedAt) / 1000)
-          );
-        }
+        const startTime = session.startedAt || now;
+        updates.total_time_seconds = Math.max(
+          1,
+          Math.floor((now - startTime) / 1000)
+        );
       } else {
         updates.current_room = nextRoom;
         updates.room_entered_at = now;
         updates.unlocked_hints = [];
         updates.last_hint_unlocked_at = null;
+        updates.status = "playing";
       }
 
       const { error } = await supabase
@@ -1332,21 +1425,25 @@ export function passRoomAdmin(
   if (!session) return { success: false };
 
   const now = Date.now();
+  if (!session.startedAt) {
+    session.startedAt = now;
+  }
+
   if (session.currentRoom >= 10) {
     session.isCleared = true;
     session.clearedAt = now;
     session.status = "cleared";
-    if (session.startedAt) {
-      session.totalTimeSeconds = Math.max(
-        1,
-        Math.floor((now - session.startedAt) / 1000)
-      );
-    }
+    session.currentRoom = 11;
+    session.totalTimeSeconds = Math.max(
+      1,
+      Math.floor((now - session.startedAt) / 1000)
+    );
   } else {
     session.currentRoom += 1;
     session.roomEnteredAt = now;
     session.unlockedHints = [];
     session.lastHintUnlockedAt = null;
+    session.status = "playing";
   }
   session.lastActiveAt = now;
 
@@ -1359,6 +1456,7 @@ export function passRoomAdmin(
     isCleared: session.isCleared,
   };
 }
+
 
 export async function resetSessionAsync(pin?: string): Promise<void> {
   if (isSupabaseConfigured()) {
@@ -1533,6 +1631,10 @@ export async function submitReviewAsync(
 
           session.hasReviewed = true;
           session.review = review;
+
+          // Vercel Blob 및 로컬 캐시에도 백업 저장
+          await saveReviewToDurableStore({ ...review, pin: cleanPin });
+
           return {
             success: true,
             message: "소중한 후기가 성공적으로 등록되었습니다!",
@@ -1547,6 +1649,8 @@ export async function submitReviewAsync(
     }
   }
 
+  // Fallback: Blob 및 로컬 캐시에 저장
+  await saveReviewToDurableStore({ ...review, pin: cleanPin });
   return submitReview(pin, reviewInput);
 }
 

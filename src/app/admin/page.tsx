@@ -25,7 +25,11 @@ import {
   ChevronUp,
   FileSpreadsheet,
   Check,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
+import { getPinOrder } from "@/data/pinOrder";
 
 interface AdminReview {
   pin: string;
@@ -88,6 +92,20 @@ export default function AdminPage() {
   const [editingMemos, setEditingMemos] = useState<Record<string, string>>({});
   const [savingPins, setSavingPins] = useState<Record<string, boolean>>({});
   const [savedPins, setSavedPins] = useState<Record<string, boolean>>({});
+
+  // Participant sort state (기본: 처음 설정한 핀번호 순서 오름차순 고정)
+  const [sortField, setSortField] = useState<"pin" | "room" | "time" | "hints">("pin");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const [passingPins, setPassingPins] = useState<Record<string, boolean>>({});
+
+  const handleToggleSort = (field: "pin" | "room" | "time" | "hints") => {
+    if (sortField === field) {
+      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortOrder("asc");
+    }
+  };
 
   // Load stats (Fast, light, in-memory)
   const fetchStats = useCallback(async () => {
@@ -208,6 +226,29 @@ export default function AdminPage() {
       }
     } catch {
       alert("서버 통신 실패");
+    }
+  };
+
+  const handlePass = async (pin: string) => {
+    setPassingPins((prev) => ({ ...prev, [pin]: true }));
+    try {
+      const res = await fetch("/api/admin/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "pass", pin, adminKey }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setActionMsg(data.message || `${pin}번 참가자 패스 완료`);
+        setTimeout(() => setActionMsg(null), 2500);
+        await fetchStats();
+      } else {
+        alert(data.error || "패스 처리에 실패했습니다.");
+      }
+    } catch {
+      alert("서버 통신 실패");
+    } finally {
+      setPassingPins((prev) => ({ ...prev, [pin]: false }));
     }
   };
 
@@ -352,21 +393,47 @@ export default function AdminPage() {
     );
   }
 
-  // Filter users
-  const filteredUsers = (stats?.users || []).filter((u) => {
-    const currentName = editingMemos[u.pin] !== undefined ? editingMemos[u.pin] : u.nickname;
-    const matchesSearch =
-      !searchFilter ||
-      u.pin.includes(searchFilter) ||
-      currentName.toLowerCase().includes(searchFilter.toLowerCase());
+  // Filter and sort users
+  const filteredUsers = (stats?.users || [])
+    .filter((u) => {
+      const currentName = editingMemos[u.pin] !== undefined ? editingMemos[u.pin] : u.nickname;
+      const matchesSearch =
+        !searchFilter ||
+        u.pin.includes(searchFilter) ||
+        currentName.toLowerCase().includes(searchFilter.toLowerCase());
 
-    if (!matchesSearch) return false;
-    if (roomFilter === "all") return true;
-    if (roomFilter === "clear") return u.isCleared;
-    if (roomFilter === "playing") return u.startedAt && !u.isCleared;
-    if (roomFilter === "ready") return !u.startedAt;
-    return String(u.currentRoom) === roomFilter;
-  });
+      if (!matchesSearch) return false;
+      if (roomFilter === "all") return true;
+      if (roomFilter === "clear") return u.isCleared;
+      if (roomFilter === "playing") return u.startedAt && !u.isCleared;
+      if (roomFilter === "ready") return !u.startedAt;
+      return String(u.currentRoom) === roomFilter;
+    })
+    .sort((a, b) => {
+      let comparison = 0;
+      if (sortField === "pin") {
+        comparison = getPinOrder(a.pin) - getPinOrder(b.pin);
+      } else if (sortField === "room") {
+        const roomA = a.isCleared ? 11 : a.currentRoom;
+        const roomB = b.isCleared ? 11 : b.currentRoom;
+        comparison = roomA - roomB;
+      } else if (sortField === "time") {
+        const timeA = a.totalTimeSeconds || 0;
+        const timeB = b.totalTimeSeconds || 0;
+        comparison = timeA - timeB;
+      } else if (sortField === "hints") {
+        const hintsA = a.totalHintsUsed || 0;
+        const hintsB = b.totalHintsUsed || 0;
+        comparison = hintsA - hintsB;
+      }
+
+      // 같은 값이면 처음 설정한 핀번호 순서로 정렬 유지
+      if (comparison === 0) {
+        comparison = getPinOrder(a.pin) - getPinOrder(b.pin);
+      }
+
+      return sortOrder === "asc" ? comparison : -comparison;
+    });
 
   const totalHintsUsedCount = (stats?.users || []).reduce(
     (acc, u) => acc + (u.totalHintsUsed || 0),
@@ -801,9 +868,9 @@ export default function AdminPage() {
                             {/* Card Top */}
                             <div className="flex items-start justify-between gap-2 mb-2.5 pb-2 border-b border-stone-800/80">
                               <div>
-                                <div className="flex items-center gap-1.5">
-                                  <span className="px-2 py-0.5 rounded bg-stone-900 font-mono font-bold text-amber-400 text-[11px] border border-stone-700">
-                                    {r.pin}
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="px-2 py-0.5 rounded-md bg-amber-950 font-mono font-black text-amber-400 text-xs tracking-wider border border-amber-600/50 shadow-sm">
+                                    PIN: {r.pin}
                                   </span>
                                   <span className="font-bold text-sm text-stone-100">
                                     {r.name}
@@ -946,12 +1013,80 @@ export default function AdminPage() {
             <table className="w-full text-left text-xs">
               <thead className="sticky top-0 z-10 bg-[#221b17] text-stone-400 border-b border-stone-800 font-mono shadow-sm">
                 <tr>
-                  <th className="py-3.5 px-5">수사 암호</th>
+                  <th
+                    onClick={() => handleToggleSort("pin")}
+                    className="py-3.5 px-5 cursor-pointer hover:text-amber-400 transition select-none group"
+                    title="클릭하여 처음 설정한 핀번호 순서로 정렬"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>수사 암호(PIN)</span>
+                      {sortField === "pin" ? (
+                        sortOrder === "asc" ? (
+                          <ArrowUp className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                        )
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-stone-600 group-hover:text-amber-400/70" />
+                      )}
+                    </div>
+                  </th>
                   <th className="py-3.5 px-5 min-w-[200px]">참가자 이름 / 메모 (수정 가능)</th>
-                  <th className="py-3.5 px-5">현재 위치</th>
+                  <th
+                    onClick={() => handleToggleSort("room")}
+                    className="py-3.5 px-5 cursor-pointer hover:text-amber-400 transition select-none group"
+                    title="클릭하여 현재 방 번호 위치 순으로 정렬"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>현재 위치</span>
+                      {sortField === "room" ? (
+                        sortOrder === "asc" ? (
+                          <ArrowUp className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                        )
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-stone-600 group-hover:text-amber-400/70" />
+                      )}
+                    </div>
+                  </th>
                   <th className="py-3.5 px-5">현재 방 체류시간</th>
-                  <th className="py-3.5 px-5">총 소요시간</th>
-                  <th className="py-3.5 px-5">사용한 힌트</th>
+                  <th
+                    onClick={() => handleToggleSort("time")}
+                    className="py-3.5 px-5 cursor-pointer hover:text-amber-400 transition select-none group"
+                    title="클릭하여 총 소요 시간 순으로 정렬"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>총 소요시간</span>
+                      {sortField === "time" ? (
+                        sortOrder === "asc" ? (
+                          <ArrowUp className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                        )
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-stone-600 group-hover:text-amber-400/70" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleToggleSort("hints")}
+                    className="py-3.5 px-5 cursor-pointer hover:text-amber-400 transition select-none group"
+                    title="클릭하여 사용한 힌트 개수 순으로 정렬"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>사용한 힌트</span>
+                      {sortField === "hints" ? (
+                        sortOrder === "asc" ? (
+                          <ArrowUp className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                        )
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-stone-600 group-hover:text-amber-400/70" />
+                      )}
+                    </div>
+                  </th>
                   <th className="py-3.5 px-5">접속 상태</th>
                   <th className="py-3.5 px-5 text-right">운영자 제어</th>
                 </tr>
@@ -1064,19 +1199,24 @@ export default function AdminPage() {
                         </td>
                         <td className="py-3.5 px-5 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            {!u.isCleared && u.startedAt && (
+                            {!u.isCleared ? (
                               <button
-                                onClick={() => handleAction("pass", u.pin)}
-                                className="px-2.5 py-1.5 rounded-lg bg-amber-700/80 hover:bg-amber-600 text-stone-100 font-bold text-xs flex items-center gap-1 transition shadow"
+                                onClick={() => handlePass(u.pin)}
+                                disabled={passingPins[u.pin]}
+                                className="px-2.5 py-1.5 rounded-lg bg-amber-700/80 hover:bg-amber-600 text-stone-100 font-bold text-xs flex items-center gap-1 transition shadow disabled:opacity-50 cursor-pointer"
                                 title="해당 참가자를 다음 방으로 강제 이동"
                               >
-                                <FastForward className="w-3.5 h-3.5" />
-                                <span>패스</span>
+                                <FastForward className={`w-3.5 h-3.5 ${passingPins[u.pin] ? "animate-spin" : ""}`} />
+                                <span>{passingPins[u.pin] ? "처리중" : "패스"}</span>
                               </button>
+                            ) : (
+                              <span className="text-[11px] font-bold text-emerald-400 px-2 py-1 rounded bg-emerald-950/60 border border-emerald-800/50">
+                                탈출완료
+                              </span>
                             )}
                             <button
                               onClick={() => handleAction("reset", u.pin)}
-                              className="px-2.5 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-stone-100 text-xs font-semibold transition border border-stone-700"
+                              className="px-2.5 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-stone-100 text-xs font-semibold transition border border-stone-700 cursor-pointer"
                               title="해당 참가자 초기화"
                             >
                               초기화

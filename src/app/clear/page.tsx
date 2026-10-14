@@ -347,26 +347,8 @@ export default function ClearPage() {
           return;
         }
 
-        // 로컬 백업 완료 처리
-        const fallbackReview = {
-          name: reviewerName.trim(),
-          content: reviewText.trim(),
-          photo: photoData,
-          createdAt: Date.now(),
-        };
-        setHasReviewed(true);
-        const updated = {
-          ...session,
-          hasReviewed: true,
-          review: fallbackReview,
-        };
-        setSession(updated);
-        try {
-          localStorage.setItem("escape_session", JSON.stringify(updated));
-        } catch {}
-        setIsReviewModalOpen(false);
-        loadBoardReviews(session?.pin);
-        alert("소중한 후기와 사진이 성공적으로 등록되었습니다! 🎉");
+        setErrorMessage(data?.message || "후기 저장에 실패했습니다. 잠시 후 다시 시도해주세요.");
+        setIsSubmittingReview(false);
         return;
       }
 

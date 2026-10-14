@@ -9,22 +9,12 @@ export default function HomePage() {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
-  const [existingSession, setExistingSession] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Check URL query ?code=... or ?pin=... or local storage on mount
+  // Check URL query ?code=... or ?pin=... on mount
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("escape_session");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setExistingSession(parsed);
-        if (parsed.pin) {
-          document.cookie = `escape_auth=${parsed.pin}; path=/; max-age=604800; SameSite=Lax`;
-        }
-      }
-
       const urlParams = new URLSearchParams(window.location.search);
       const urlCode = urlParams.get("code") || urlParams.get("pin");
       if (urlCode && urlCode.trim().length === 6) {
@@ -67,17 +57,6 @@ export default function HomePage() {
     } catch (err: any) {
       setErrorMsg("서버 통신에 실패했습니다. 다시 시도해주세요.");
       setIsLoading(false);
-    }
-  };
-
-  const handleResume = () => {
-    if (existingSession && existingSession.pin) {
-      document.cookie = `escape_auth=${existingSession.pin}; path=/; max-age=604800; SameSite=Lax`;
-      if (existingSession.isCleared || existingSession.currentRoom > 10) {
-        router.push("/clear");
-      } else {
-        router.push("/play");
-      }
     }
   };
 
@@ -141,20 +120,6 @@ export default function HomePage() {
 
         {/* Action Buttons */}
         <div className="w-full max-w-sm space-y-3">
-          {existingSession && (
-            <button
-              onClick={handleResume}
-              className="w-full py-3.5 px-6 rounded-2xl bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center gap-2 border border-stone-600 transition shadow-lg"
-            >
-              <span>
-                {existingSession.isCleared || existingSession.currentRoom > 10
-                  ? "이어서 수사하기 (CLEAR)"
-                  : `이어서 수사하기 (Room ${existingSession.currentRoom})`}
-              </span>
-              <ArrowRight className="w-4 h-4 text-amber-400" />
-            </button>
-          )}
-
           <button
             onClick={() => {
               setErrorMsg(null);
@@ -216,12 +181,13 @@ export default function HomePage() {
                 />
               </div>
 
-              {/* 힌트 신중 사용 당부 멘트 */}
-              <div className="py-2.5 px-3 rounded-xl bg-amber-950/60 border border-amber-600/40 text-amber-300 text-xs text-center flex items-center justify-center gap-1.5 shadow-sm">
+              {/* 힌트 신중 사용 당부 멘트 (2번째 문장 줄바꿈) */}
+              <div className="py-2.5 px-3 rounded-xl bg-amber-950/60 border border-amber-600/40 text-amber-300 text-xs text-center flex items-center justify-center gap-2 shadow-sm">
                 <span className="text-sm">💡</span>
-                <span className="font-semibold leading-relaxed">
-                  힌트는 적게 사용하는 게 좋을 거야! 쓰기 전에 한 번 더 고민해봐.
-                </span>
+                <div className="font-semibold leading-relaxed text-center">
+                  <div>힌트는 적게 사용하는 게 좋을 거야!</div>
+                  <div>쓰기 전에 한 번 더 고민해봐.</div>
+                </div>
               </div>
 
               <button
