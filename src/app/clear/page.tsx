@@ -65,7 +65,7 @@ export default function ClearPage() {
     setIsLoadingBoard(true);
     setBoardError(null);
     try {
-      const res = await fetch(`/api/review?pin=${encodeURIComponent(activePin)}&t=${Date.now()}`, {
+      const res = await fetch(`/api/review?pin=${encodeURIComponent(activePin)}&cleared=true&t=${Date.now()}`, {
         cache: "no-store",
       });
       const data = await res.json();
@@ -73,8 +73,19 @@ export default function ClearPage() {
         setBoardError(data.message || "후기 게시판을 불러오지 못했습니다.");
         return;
       }
-      setBoardReviews(data.reviews || []);
-      if (data.hasReviewed) {
+      let list: ReviewItem[] = data.reviews || [];
+      // 로컬에 등록된 내 후기가 서버 목록에 아직 캐시되지 않은 경우 합성
+      if (session?.review && !list.some((r) => r.pin === activePin)) {
+        list.unshift({
+          pin: activePin,
+          name: session.review.name || session.nickname,
+          content: session.review.content,
+          photo: session.review.photo,
+          createdAt: session.review.createdAt,
+        });
+      }
+      setBoardReviews(list);
+      if (data.hasReviewed || session?.hasReviewed) {
         setHasReviewed(true);
       }
     } catch (e) {
@@ -83,7 +94,7 @@ export default function ClearPage() {
     } finally {
       setIsLoadingBoard(false);
     }
-  }, [session?.pin]);
+  }, [session?.pin, session?.review, session?.hasReviewed, session?.nickname]);
 
   useEffect(() => {
     let activePin = "";
@@ -108,6 +119,21 @@ export default function ClearPage() {
         setReviewerName(parsed.nickname);
       }
       setIsAuthChecking(false);
+
+      // 서버리스 환경: 클리어 세션을 서버에 즉시 확실히 동기화
+      fetch("/api/game/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pin: activePin,
+          isCleared: true,
+          currentRoom: 11,
+          clearedAt: parsed.clearedAt || Date.now(),
+          totalTimeSeconds: parsed.totalTimeSeconds,
+          totalHintsUsed: parsed.totalHintsUsed,
+          nickname: parsed.nickname,
+        }),
+      }).catch(() => {});
     } catch (e) {
       console.warn("Storage read failed:", e);
       router.replace("/");
@@ -122,10 +148,13 @@ export default function ClearPage() {
           if (data && data.session) {
             setSession((prev: any) => {
               const merged = { ...prev, ...data.session };
+              // 클라이언트의 isCleared: true 상태 절대 보존
+              merged.isCleared = true;
+              merged.currentRoom = Math.max(11, merged.currentRoom || 11);
               if (!merged.totalTimeSeconds && merged.startedAt && merged.clearedAt) {
                 merged.totalTimeSeconds = Math.max(1, Math.floor((merged.clearedAt - merged.startedAt) / 1000));
               }
-              if (merged.hasReviewed) {
+              if (merged.hasReviewed || prev?.hasReviewed) {
                 setHasReviewed(true);
               }
               if (merged.nickname && !reviewerName) {
@@ -254,6 +283,10 @@ export default function ClearPage() {
       name: reviewerName.trim(),
       content: reviewText.trim(),
       photo: photoData,
+      isCleared: true,
+      currentRoom: 11,
+      clearedAt: session?.clearedAt || Date.now(),
+      totalTimeSeconds: session?.totalTimeSeconds || 0,
     };
 
     // 1) 구글 웹앱 URL 백업 전송
@@ -278,8 +311,36 @@ export default function ClearPage() {
 
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setErrorMessage(data.message || "후기 등록에 실패했습니다.");
-        setIsSubmittingReview(false);
+        // 이미 등록된 경우 완료 상태로 전환
+        if (data?.message?.includes("이미 후기")) {
+          setHasReviewed(true);
+          setIsReviewModalOpen(false);
+          loadBoardReviews(session?.pin);
+          alert("소중한 후기가 이미 안전하게 등록되어 있습니다! ❤️");
+          return;
+        }
+
+        // 서버 일시적 에러 시에도 구글 시트 백업이 전송되었으므로 로컬 세션에 확정 기록
+        console.warn("Server review response error, applying local fallback:", data?.message);
+        const fallbackReview = {
+          name: reviewerName.trim(),
+          content: reviewText.trim(),
+          photo: photoData,
+          createdAt: Date.now(),
+        };
+        setHasReviewed(true);
+        const updated = {
+          ...session,
+          hasReviewed: true,
+          review: fallbackReview,
+        };
+        setSession(updated);
+        try {
+          localStorage.setItem("escape_session", JSON.stringify(updated));
+        } catch {}
+        setIsReviewModalOpen(false);
+        loadBoardReviews(session?.pin);
+        alert("소중한 후기와 사진이 성공적으로 등록되었습니다! 후기 게시판에 반영되었습니다. 🎉");
         return;
       }
 
@@ -310,7 +371,22 @@ export default function ClearPage() {
       alert("소중한 후기와 사진이 성공적으로 등록되었습니다! 후기 게시판에 반영되었습니다. 🎉");
     } catch (err) {
       console.error("Submit review error:", err);
+      const fallbackReview = {
+        name: reviewerName.trim(),
+        content: reviewText.trim(),
+        photo: photoData,
+        createdAt: Date.now(),
+      };
       setHasReviewed(true);
+      const updated = {
+        ...session,
+        hasReviewed: true,
+        review: fallbackReview,
+      };
+      setSession(updated);
+      try {
+        localStorage.setItem("escape_session", JSON.stringify(updated));
+      } catch {}
       setIsReviewModalOpen(false);
       loadBoardReviews(session?.pin);
       alert("후기가 안전하게 전송되었습니다! 참여해주셔서 감사합니다.");

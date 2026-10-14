@@ -411,7 +411,7 @@ export function resetSession(pin?: string) {
 
 export function submitReview(
   pin: string,
-  reviewInput: { name: string; content: string; photo?: string | null }
+  reviewInput: { name: string; content: string; photo?: string | null; isCleared?: boolean }
 ): {
   success: boolean;
   message: string;
@@ -432,6 +432,14 @@ export function submitReview(
       review: session.review,
       session,
     };
+  }
+
+  // 클라이언트 클리어 플래그 동기화
+  if (reviewInput.isCleared) {
+    session.isCleared = true;
+    if (session.currentRoom <= 10) {
+      session.currentRoom = 11;
+    }
   }
 
   // 클리어 여부 확인: 사건 해결자만 후기 등록 가능

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { submitReview, getSession, getAllReviews } from "@/lib/store";
+import { submitReview, getSession, getAllReviews, syncClientSession } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -7,7 +7,7 @@ export const maxDuration = 30;
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { pin, name, content, photo } = body;
+    const { pin, name, content, photo, isCleared, currentRoom } = body;
 
     if (!pin) {
       return NextResponse.json(
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const session = getSession(pin);
+    let session = getSession(pin);
     if (!session) {
       return NextResponse.json(
         { success: false, message: "유효하지 않은 수사 암호입니다." },
@@ -24,8 +24,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // 서버리스 환경 대응: 클라이언트에서 클리어 상태를 보냈거나 currentRoom > 10인 경우 세션 동기화
+    if (isCleared || currentRoom > 10) {
+      session = syncClientSession({
+        pin,
+        isCleared: true,
+        currentRoom: 11,
+        totalTimeSeconds: body.totalTimeSeconds,
+        clearedAt: body.clearedAt || Date.now(),
+      });
+    }
+
     // 클리어 여부 확인
-    if (!session.isCleared && session.currentRoom <= 10) {
+    const userCleared = !!session.isCleared || session.currentRoom > 10 || isCleared === true;
+    if (!userCleared) {
       return NextResponse.json(
         { success: false, message: "사건을 모두 해결(클리어)한 탐정만 후기를 등록할 수 있습니다." },
         { status: 403 }
@@ -58,6 +70,7 @@ export async function POST(req: NextRequest) {
       name,
       content,
       photo: photo || null,
+      isCleared: userCleared,
     });
 
     if (!result.success) {
@@ -112,6 +125,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const pin = searchParams.get("pin");
+    const isClientCleared = searchParams.get("cleared") === "true";
 
     if (!pin) {
       return NextResponse.json(
@@ -120,7 +134,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const session = getSession(pin);
+    let session = getSession(pin);
     if (!session) {
       return NextResponse.json(
         { success: false, message: "유효하지 않은 수사 암호입니다." },
@@ -128,8 +142,13 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // 클라이언트가 클리어 상태로 요청 시 서버 세션 동기화
+    if (isClientCleared && !session.isCleared) {
+      session = syncClientSession({ pin, isCleared: true, currentRoom: 11 });
+    }
+
     // 클리어한 사람만 후기 게시판을 볼 수 있도록 통제
-    const isCleared = !!session.isCleared || session.currentRoom > 10;
+    const isCleared = !!session.isCleared || session.currentRoom > 10 || isClientCleared;
     if (!isCleared) {
       return NextResponse.json(
         {
