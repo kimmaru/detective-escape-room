@@ -90,6 +90,91 @@ export async function saveHiddenPins(pinsSet: Set<string>): Promise<void> {
   }
 }
 
+const MEMOS_FILE = path.join("/tmp", "escaperoom_admin_memos.json");
+let cachedAdminMemos: Record<string, string> = {};
+let lastAdminMemosFetchAt = 0;
+
+export async function fetchAdminMemos(): Promise<Record<string, string>> {
+  const now = Date.now();
+  if (now - lastAdminMemosFetchAt < 2000 && Object.keys(cachedAdminMemos).length > 0) {
+    return cachedAdminMemos;
+  }
+  lastAdminMemosFetchAt = now;
+
+  try {
+    const res = await fetch(
+      `${BLOB_BASE_URL}/admin_memos.json?_t=${now}_${Math.random().toString(36).substring(7)}`,
+      {
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+        },
+      }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data === "object") {
+        cachedAdminMemos = data;
+        try {
+          fs.writeFileSync(MEMOS_FILE, JSON.stringify(data, null, 2));
+        } catch {}
+        return cachedAdminMemos;
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to fetch admin memos from Blob:", e);
+  }
+
+  try {
+    if (fs.existsSync(MEMOS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(MEMOS_FILE, "utf-8"));
+      if (data && typeof data === "object") {
+        cachedAdminMemos = data;
+      }
+    }
+  } catch {}
+
+  return cachedAdminMemos;
+}
+
+export async function saveAdminMemos(memos: Record<string, string>): Promise<void> {
+  cachedAdminMemos = memos;
+  lastAdminMemosFetchAt = Date.now();
+
+  try {
+    fs.writeFileSync(MEMOS_FILE, JSON.stringify(memos, null, 2));
+  } catch {}
+
+  try {
+    await put("admin_memos.json", JSON.stringify(memos), {
+      access: "public",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+    });
+  } catch (e) {
+    console.error("Failed to save admin memos to Vercel Blob:", e);
+  }
+}
+
+export async function updateSessionNickname(pin: string, newNickname: string): Promise<boolean> {
+  const cleanPin = resolvePin(pin).toUpperCase();
+  const store = getStore();
+  const session = store.sessions[cleanPin];
+  if (!session) return false;
+
+  const trimmed = newNickname.trim();
+  session.nickname = trimmed || `탐정_${cleanPin}`;
+  store.sessions[cleanPin] = session;
+  savePersistedSessions(store.sessions);
+
+  const memos = await fetchAdminMemos();
+  memos[cleanPin] = session.nickname;
+  await saveAdminMemos(memos);
+
+  return true;
+}
+
 export async function getAllReviewsAsync(
   includeHidden = false
 ): Promise<Array<ReviewData & { pin: string }>> {
@@ -340,17 +425,32 @@ declare global {
 
 function loadPersistedSessions(): Record<string, PlayerSession> {
   const defaultPins = generateDefaultPins();
+  let sessions = defaultPins;
   try {
     if (fs.existsSync(CACHE_FILE)) {
       const data = fs.readFileSync(CACHE_FILE, "utf-8");
       const parsed = JSON.parse(data);
       // Merge with default pins to ensure all 100 exist
-      return { ...defaultPins, ...parsed };
+      sessions = { ...defaultPins, ...parsed };
     }
   } catch (e) {
     console.error("Failed to load sessions from /tmp:", e);
   }
-  return defaultPins;
+
+  try {
+    if (fs.existsSync(MEMOS_FILE)) {
+      const memos = JSON.parse(fs.readFileSync(MEMOS_FILE, "utf-8"));
+      if (memos && typeof memos === "object") {
+        Object.entries(memos).forEach(([pin, memo]) => {
+          if (sessions[pin] && typeof memo === "string" && memo.trim()) {
+            sessions[pin].nickname = memo.trim();
+          }
+        });
+      }
+    }
+  } catch {}
+
+  return sessions;
 }
 
 function savePersistedSessions(sessions: Record<string, PlayerSession>) {
@@ -372,6 +472,17 @@ function getStore(): GlobalStore {
 
 export function getAllSessions(): PlayerSession[] {
   const store = getStore();
+  return Object.values(store.sessions);
+}
+
+export async function getAllSessionsAsync(): Promise<PlayerSession[]> {
+  const memos = await fetchAdminMemos();
+  const store = getStore();
+  Object.entries(memos).forEach(([pin, memo]) => {
+    if (store.sessions[pin] && typeof memo === "string" && memo.trim()) {
+      store.sessions[pin].nickname = memo.trim();
+    }
+  });
   return Object.values(store.sessions);
 }
 
@@ -468,9 +579,7 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
   if (clientState.startedAt) {
     session.startedAt = clientState.startedAt;
   }
-  if (clientState.nickname) {
-    session.nickname = clientState.nickname;
-  }
+  // Note: session.nickname is managed by admin memo and not overwritten by client sync
   if (clientState.unlockedHints && clientState.unlockedHints.length >= session.unlockedHints.length) {
     session.unlockedHints = clientState.unlockedHints;
   }

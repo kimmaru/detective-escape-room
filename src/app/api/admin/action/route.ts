@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { passRoomAdmin, resetSession, toggleReviewVisibility } from "@/lib/store";
+import { passRoomAdmin, resetSession, toggleReviewVisibility, updateSessionNickname } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -7,12 +7,19 @@ export const fetchCache = "force-no-store";
 
 export async function POST(req: NextRequest) {
   try {
-    const { action, pin, hide, adminKey } = await req.json();
+    const { action, pin, hide, adminKey, nickname } = await req.json();
 
     // Basic admin authentication key (default: 2026 or ADMIN)
     const validKey = process.env.ADMIN_KEY || "2026";
     if (adminKey !== validKey && adminKey !== "admin" && adminKey !== "cain2026") {
       return NextResponse.json({ error: "관리자 인증 번호가 일치하지 않습니다." }, { status: 401 });
+    }
+
+    if ((action === "updateNickname" || action === "updateMemo") && pin) {
+      const cleanPin = String(pin).trim();
+      const newNickname = typeof nickname === "string" ? nickname : "";
+      const ok = await updateSessionNickname(cleanPin, newNickname);
+      return NextResponse.json({ success: ok, pin: cleanPin, nickname: newNickname });
     }
 
     if (action === "pass" && pin) {

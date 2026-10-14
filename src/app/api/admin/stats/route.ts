@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllSessions, getAllReviewsAsync, syncReviewsFromGoogleSheet } from "@/lib/store";
+import { getAllSessionsAsync, getAllReviews } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const fetchCache = "force-no-store";
 
 export async function GET(req: NextRequest) {
-  try {
-    await syncReviewsFromGoogleSheet();
-  } catch {}
-
-  const sessions = getAllSessions();
-  const reviews = await getAllReviewsAsync(true);
+  const sessions = await getAllSessionsAsync();
+  const reviews = getAllReviews(true);
   const now = Date.now();
 
   const roomDistribution: Record<string, number> = {

@@ -21,6 +21,10 @@ import {
   MessageSquare,
   Image as ImageIcon,
   X,
+  ChevronDown,
+  ChevronUp,
+  FileSpreadsheet,
+  Check,
 } from "lucide-react";
 
 interface AdminReview {
@@ -39,6 +43,7 @@ interface AdminUser {
   startedAt: number | null;
   roomEnteredAt: number | null;
   unlockedHints: number[];
+  totalHintsUsed: number;
   isCleared: boolean;
   clearedAt: number | null;
   totalTimeSeconds: number;
@@ -55,7 +60,6 @@ interface StatsData {
   avgClearSeconds: number;
   totalReviews?: number;
   hiddenReviews?: number;
-  reviews?: AdminReview[];
   roomDistribution: Record<string, number>;
   bottlenecks: number[];
   users: AdminUser[];
@@ -73,7 +77,19 @@ export default function AdminPage() {
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
-  // Load stats
+  // Dedicated review management state (decoupled from stats auto-refresh)
+  const [reviews, setReviews] = useState<AdminReview[]>([]);
+  const [isReviewsLoading, setIsReviewsLoading] = useState<boolean>(false);
+  const [isSheetSyncing, setIsSheetSyncing] = useState<boolean>(false);
+  const [isReviewCardOpen, setIsReviewCardOpen] = useState<boolean>(true);
+  const [reviewsLoaded, setReviewsLoaded] = useState<boolean>(false);
+
+  // Participant memo state
+  const [editingMemos, setEditingMemos] = useState<Record<string, string>>({});
+  const [savingPins, setSavingPins] = useState<Record<string, boolean>>({});
+  const [savedPins, setSavedPins] = useState<Record<string, boolean>>({});
+
+  // Load stats (Fast, light, in-memory)
   const fetchStats = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -93,6 +109,39 @@ export default function AdminPage() {
     }
   }, []);
 
+  // Fetch reviews independently
+  const fetchReviews = useCallback(async (syncSheet = false) => {
+    if (syncSheet) {
+      setIsSheetSyncing(true);
+    } else {
+      setIsReviewsLoading(true);
+    }
+    try {
+      const url = `/api/admin/reviews?_nc=${Date.now()}_${Math.random().toString(36).substring(7)}${syncSheet ? "&syncSheet=true" : ""}`;
+      const res = await fetch(url, {
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+        },
+      });
+      const data = await res.json();
+      if (data && data.reviews) {
+        setReviews(data.reviews);
+        setReviewsLoaded(true);
+        if (syncSheet) {
+          setActionMsg("구글 스프레드시트 최신 후기가 성공적으로 동기화되었습니다.");
+          setTimeout(() => setActionMsg(null), 3500);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to fetch reviews:", e);
+    } finally {
+      setIsReviewsLoading(false);
+      setIsSheetSyncing(false);
+    }
+  }, []);
+
   // Check stored auth
   useEffect(() => {
     const savedKey = sessionStorage.getItem("escape_admin_key");
@@ -102,15 +151,18 @@ export default function AdminPage() {
     }
   }, []);
 
-  // Auto refresh loop
+  // Auto refresh loop (Only refreshes participant live stats every 3.5s)
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchStats();
+    if (!reviewsLoaded) {
+      fetchReviews(false);
+    }
 
     if (!autoRefresh) return;
     const interval = setInterval(fetchStats, 3500);
     return () => clearInterval(interval);
-  }, [isAuthenticated, autoRefresh, fetchStats]);
+  }, [isAuthenticated, autoRefresh, fetchStats, reviewsLoaded, fetchReviews]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,20 +211,47 @@ export default function AdminPage() {
     }
   };
 
+  const handleSaveMemo = async (pin: string, newMemo: string) => {
+    setSavingPins((prev) => ({ ...prev, [pin]: true }));
+    try {
+      const res = await fetch("/api/admin/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "updateNickname",
+          pin,
+          nickname: newMemo,
+          adminKey,
+        }),
+      });
+      if (res.ok) {
+        setSavedPins((prev) => ({ ...prev, [pin]: true }));
+        setTimeout(() => {
+          setSavedPins((prev) => ({ ...prev, [pin]: false }));
+        }, 1500);
+        // Instant local update
+        setStats((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            users: prev.users.map((u) => (u.pin === pin ? { ...u, nickname: newMemo } : u)),
+          };
+        });
+      }
+    } catch (e) {
+      console.error("Failed to save memo:", e);
+    } finally {
+      setSavingPins((prev) => ({ ...prev, [pin]: false }));
+    }
+  };
+
   const handleToggleReview = async (pin: string, targetHide: boolean) => {
     // 1. 즉각적인 UI 반영 (낙관적 업데이트)
-    setStats((prev) => {
-      if (!prev || !prev.reviews) return prev;
-      const updatedReviews = prev.reviews.map((r) =>
+    setReviews((prev) =>
+      prev.map((r) =>
         r.pin.toUpperCase() === pin.trim().toUpperCase() ? { ...r, hidden: targetHide } : r
-      );
-      const hiddenCount = updatedReviews.filter((r) => r.hidden).length;
-      return {
-        ...prev,
-        reviews: updatedReviews,
-        hiddenReviews: hiddenCount,
-      };
-    });
+      )
+    );
 
     try {
       const res = await fetch("/api/admin/action", {
@@ -189,14 +268,13 @@ export default function AdminPage() {
       if (res.ok) {
         setActionMsg(data.message || `${pin}번 후기 상태 변경 완료`);
         setTimeout(() => setActionMsg(null), 3000);
-        fetchStats();
       } else {
         alert(data.error || "후기 상태 변경 실패");
-        fetchStats();
+        fetchReviews(false);
       }
     } catch {
       alert("서버 통신 실패");
-      fetchStats();
+      fetchReviews(false);
     }
   };
 
@@ -217,9 +295,9 @@ export default function AdminPage() {
 
   const exportCSV = () => {
     if (!stats) return;
-    let csv = "수사암호,닉네임,현재방,상태,사용힌트수,총소요시간(초)\n";
+    let csv = "수사암호,닉네임/메모,현재방,상태,사용한힌트총수,총소요시간(초)\n";
     stats.users.forEach((u) => {
-      csv += `${u.pin},${u.nickname},${u.isCleared ? "CLEAR" : u.currentRoom},${u.status},${u.unlockedHints?.length || 0},${u.totalTimeSeconds || 0}\n`;
+      csv += `${u.pin},${u.nickname},${u.isCleared ? "CLEAR" : u.currentRoom},${u.status},${u.totalHintsUsed || 0},${u.totalTimeSeconds || 0}\n`;
     });
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -276,9 +354,11 @@ export default function AdminPage() {
 
   // Filter users
   const filteredUsers = (stats?.users || []).filter((u) => {
+    const currentName = editingMemos[u.pin] !== undefined ? editingMemos[u.pin] : u.nickname;
     const matchesSearch =
+      !searchFilter ||
       u.pin.includes(searchFilter) ||
-      u.nickname.toLowerCase().includes(searchFilter.toLowerCase());
+      currentName.toLowerCase().includes(searchFilter.toLowerCase());
 
     if (!matchesSearch) return false;
     if (roomFilter === "all") return true;
@@ -289,7 +369,7 @@ export default function AdminPage() {
   });
 
   const totalHintsUsedCount = (stats?.users || []).reduce(
-    (acc, u) => acc + (u.unlockedHints?.length || 0),
+    (acc, u) => acc + (u.totalHintsUsed || 0),
     0
   );
 
@@ -562,8 +642,8 @@ export default function AdminPage() {
           )}
         </section>
 
-        {/* Review Management Section */}
-        <section className="mb-6 p-5 lg:p-6 rounded-3xl bg-[#1b1613] border border-stone-800 shadow-xl">
+        {/* Review Management Section (Independent Card) */}
+        <section className="mb-6 p-5 lg:p-6 rounded-3xl bg-[#1b1613] border border-stone-800 shadow-xl transition">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-stone-800/80 mb-4">
             <div className="flex items-center gap-2.5">
               <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
@@ -572,188 +652,240 @@ export default function AdminPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-base lg:text-lg font-black text-stone-100 tracking-tight">
-                    수사 후기 관리 및 게시판 노출 제어
+                    수사 후기 관리 및 게시판 숨김 제어
                   </h2>
                   <span className="px-2.5 py-0.5 rounded-full bg-stone-800 text-amber-400 text-xs font-mono font-bold">
-                    총 {stats?.totalReviews || 0}건
+                    총 {reviews.length}건
                   </span>
+                  {reviews.some((r) => r.hidden) && (
+                    <span className="px-2 py-0.5 rounded-full bg-red-950/80 border border-red-700/60 text-red-300 text-[11px] font-bold">
+                      {reviews.filter((r) => r.hidden).length}건 숨김
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-stone-400 mt-0.5">
-                  비밀 후기 게시판에 등록된 참가자 후기를 확인하고, 원치 않는 후기를 즉시 숨기거나 다시 노출할 수 있습니다.
+                  비밀 후기 게시판의 후기를 조회하고 숨김/노출을 제어합니다. (대시보드 실시간 갱신과 분리되어 딜레이 없음)
                 </p>
               </div>
             </div>
 
-            {/* Filter buttons & search */}
+            {/* Action buttons: Refresh, Sync Google Sheet, Collapse/Expand */}
             <div className="flex flex-wrap items-center gap-2">
-              <div className="relative min-w-[180px]">
-                <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={reviewSearch}
-                  onChange={(e) => setReviewSearch(e.target.value)}
-                  placeholder="작성자 또는 PIN 검색"
-                  className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-stone-900 border border-stone-700 text-xs text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 font-medium"
-                />
-              </div>
+              <button
+                type="button"
+                onClick={() => fetchReviews(false)}
+                disabled={isReviewsLoading || isSheetSyncing}
+                className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold transition flex items-center gap-1.5 border border-stone-700 disabled:opacity-50 cursor-pointer"
+                title="등록된 후기 목록 새로고침"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isReviewsLoading ? "animate-spin text-amber-400" : ""}`} />
+                <span>{isReviewsLoading ? "조회 중..." : "후기 새로고침"}</span>
+              </button>
 
-              <div className="flex rounded-xl bg-stone-900 p-1 border border-stone-800 text-xs font-bold">
-                <button
-                  type="button"
-                  onClick={() => setReviewFilter("all")}
-                  className={`px-3 py-1 rounded-lg transition cursor-pointer ${
-                    reviewFilter === "all" ? "bg-amber-600 text-stone-950 font-black" : "text-stone-400 hover:text-stone-200"
-                  }`}
-                >
-                  전체 ({stats?.totalReviews || 0})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setReviewFilter("visible")}
-                  className={`px-3 py-1 rounded-lg transition cursor-pointer ${
-                    reviewFilter === "visible" ? "bg-emerald-600 text-stone-950 font-black" : "text-stone-400 hover:text-stone-200"
-                  }`}
-                >
-                  노출 중 ({(stats?.totalReviews || 0) - (stats?.hiddenReviews || 0)})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setReviewFilter("hidden")}
-                  className={`px-3 py-1 rounded-lg transition cursor-pointer ${
-                    reviewFilter === "hidden" ? "bg-red-600 text-white font-black" : "text-stone-400 hover:text-stone-200"
-                  }`}
-                >
-                  숨김 ({stats?.hiddenReviews || 0})
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => fetchReviews(true)}
+                disabled={isReviewsLoading || isSheetSyncing}
+                className="px-3 py-1.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 text-xs font-bold transition flex items-center gap-1.5 border border-amber-500/40 disabled:opacity-50 cursor-pointer"
+                title="구글 스프레드시트에서 최신 후기 가져오기"
+              >
+                <FileSpreadsheet className={`w-3.5 h-3.5 ${isSheetSyncing ? "animate-spin text-amber-400" : ""}`} />
+                <span>{isSheetSyncing ? "시트 동기화 중..." : "구글 시트 동기화"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsReviewCardOpen(!isReviewCardOpen)}
+                className="px-2.5 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-stone-200 text-xs transition border border-stone-700 cursor-pointer"
+                title={isReviewCardOpen ? "후기 카드 접기" : "후기 카드 펼치기"}
+              >
+                {isReviewCardOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
             </div>
           </div>
 
-          {/* Review List Grid */}
-          {(() => {
-            const list = (stats?.reviews || []).filter((r) => {
-              if (reviewFilter === "visible" && r.hidden) return false;
-              if (reviewFilter === "hidden" && !r.hidden) return false;
-              if (reviewSearch) {
-                const q = reviewSearch.toLowerCase();
-                const matchPin = r.pin?.toLowerCase().includes(q);
-                const matchName = r.name?.toLowerCase().includes(q);
-                const matchContent = r.content?.toLowerCase().includes(q);
-                return matchPin || matchName || matchContent;
-              }
-              return true;
-            });
-
-            if (list.length === 0) {
-              return (
-                <div className="py-10 text-center text-stone-500 text-xs rounded-2xl bg-[#161210] border border-stone-800/80">
-                  {stats?.reviews && stats.reviews.length > 0
-                    ? "선택한 조건에 맞는 후기가 없습니다."
-                    : "아직 등록된 수사 후기가 없습니다."}
+          {isReviewCardOpen && (
+            <>
+              {/* Filter buttons & search */}
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div className="relative min-w-[200px] flex-1 max-w-sm">
+                  <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={reviewSearch}
+                    onChange={(e) => setReviewSearch(e.target.value)}
+                    placeholder="작성자, 암호 또는 내용 검색"
+                    className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-stone-900 border border-stone-700 text-xs text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 font-medium"
+                  />
                 </div>
-              );
-            }
 
-            return (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 max-h-[500px] overflow-y-auto pr-1">
-                {list.map((r) => {
-                  const isHidden = !!r.hidden;
+                <div className="flex rounded-xl bg-stone-900 p-1 border border-stone-800 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setReviewFilter("all")}
+                    className={`px-3 py-1 rounded-lg transition cursor-pointer ${
+                      reviewFilter === "all" ? "bg-amber-600 text-stone-950 font-black" : "text-stone-400 hover:text-stone-200"
+                    }`}
+                  >
+                    전체 ({reviews.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReviewFilter("visible")}
+                    className={`px-3 py-1 rounded-lg transition cursor-pointer ${
+                      reviewFilter === "visible" ? "bg-emerald-600 text-stone-950 font-black" : "text-stone-400 hover:text-stone-200"
+                    }`}
+                  >
+                    노출 중 ({reviews.filter((r) => !r.hidden).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReviewFilter("hidden")}
+                    className={`px-3 py-1 rounded-lg transition cursor-pointer ${
+                      reviewFilter === "hidden" ? "bg-red-600 text-white font-black" : "text-stone-400 hover:text-stone-200"
+                    }`}
+                  >
+                    숨김 ({reviews.filter((r) => r.hidden).length})
+                  </button>
+                </div>
+              </div>
+
+              {/* Review List Grid */}
+              {(() => {
+                const list = reviews.filter((r) => {
+                  if (reviewFilter === "visible" && r.hidden) return false;
+                  if (reviewFilter === "hidden" && !r.hidden) return false;
+                  if (reviewSearch) {
+                    const q = reviewSearch.toLowerCase();
+                    const matchPin = r.pin?.toLowerCase().includes(q);
+                    const matchName = r.name?.toLowerCase().includes(q);
+                    const matchContent = r.content?.toLowerCase().includes(q);
+                    return matchPin || matchName || matchContent;
+                  }
+                  return true;
+                });
+
+                if (isReviewsLoading && reviews.length === 0) {
                   return (
-                    <div
-                      key={r.pin}
-                      className={`p-4 rounded-2xl border transition flex flex-col justify-between ${
-                        isHidden
-                          ? "bg-[#181412]/80 border-red-900/40 opacity-75"
-                          : "bg-[#221b17] border-stone-800 hover:border-amber-700/60"
-                      }`}
-                    >
-                      <div>
-                        {/* Card Top */}
-                        <div className="flex items-start justify-between gap-2 mb-2.5 pb-2 border-b border-stone-800/80">
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="px-2 py-0.5 rounded bg-stone-900 font-mono font-bold text-amber-400 text-[11px] border border-stone-700">
-                                {r.pin}
-                              </span>
-                              <span className="font-bold text-sm text-stone-100">
-                                {r.name}
-                              </span>
-                            </div>
-                            <span className="text-[10px] text-stone-500 font-mono mt-0.5 block">
-                              {r.createdAt ? new Date(r.createdAt).toLocaleString("ko-KR") : "-"}
-                            </span>
-                          </div>
-
-                          {isHidden ? (
-                            <span className="px-2 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-800 text-[10px] font-bold flex items-center gap-1 shrink-0">
-                              <EyeOff className="w-3 h-3" />
-                              <span>게시판 숨김됨</span>
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold flex items-center gap-1 shrink-0">
-                              <Eye className="w-3 h-3" />
-                              <span>게시판 노출 중</span>
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Photo thumbnail if exists */}
-                        {r.photo && (
-                          <div
-                            className="relative mb-2.5 rounded-xl overflow-hidden border border-amber-600/30 bg-stone-950 h-32 group cursor-pointer"
-                            onClick={() => setPreviewPhoto(r.photo || null)}
-                          >
-                            <img
-                              src={r.photo}
-                              alt={`${r.name} 사진`}
-                              className="w-full h-full object-cover group-hover:scale-105 transition"
-                            />
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-[11px] font-bold text-stone-200 gap-1">
-                              <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
-                              <span>사진 크게보기</span>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Content text */}
-                        <p className="text-xs text-stone-300 leading-relaxed whitespace-pre-wrap line-clamp-4 font-medium mb-3">
-                          {r.content}
-                        </p>
-                      </div>
-
-                      {/* Card Action Button */}
-                      <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between">
-                        <span className="text-[10px] text-stone-500">
-                          {isHidden ? "게시판에서 숨겨진 상태입니다" : "클리어 유저에게 노출 중입니다"}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleReview(r.pin, !isHidden)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
-                            isHidden
-                              ? "bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 border border-emerald-600"
-                              : "bg-red-950/90 hover:bg-red-900 text-red-200 border border-red-700"
-                          }`}
-                        >
-                          {isHidden ? (
-                            <>
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>게시판에 노출하기</span>
-                            </>
-                          ) : (
-                            <>
-                              <EyeOff className="w-3.5 h-3.5" />
-                              <span>게시판에서 숨기기</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
+                    <div className="py-12 text-center text-amber-400/80 text-xs rounded-2xl bg-[#161210] border border-stone-800/80 flex items-center justify-center gap-2">
+                      <RefreshCw className="w-4 h-4 animate-spin text-amber-500" />
+                      <span>후기 목록을 불러오는 중입니다...</span>
                     </div>
                   );
-                })}
-              </div>
-            );
-          })()}
+                }
+
+                if (list.length === 0) {
+                  return (
+                    <div className="py-10 text-center text-stone-500 text-xs rounded-2xl bg-[#161210] border border-stone-800/80">
+                      {reviews.length > 0
+                        ? "선택한 조건에 맞는 후기가 없습니다."
+                        : "아직 등록된 수사 후기가 없습니다."}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 max-h-[500px] overflow-y-auto pr-1">
+                    {list.map((r) => {
+                      const isHidden = !!r.hidden;
+                      return (
+                        <div
+                          key={r.pin}
+                          className={`p-4 rounded-2xl border transition flex flex-col justify-between ${
+                            isHidden
+                              ? "bg-[#181412]/80 border-red-900/40 opacity-75"
+                              : "bg-[#221b17] border-stone-800 hover:border-amber-700/60"
+                          }`}
+                        >
+                          <div>
+                            {/* Card Top */}
+                            <div className="flex items-start justify-between gap-2 mb-2.5 pb-2 border-b border-stone-800/80">
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="px-2 py-0.5 rounded bg-stone-900 font-mono font-bold text-amber-400 text-[11px] border border-stone-700">
+                                    {r.pin}
+                                  </span>
+                                  <span className="font-bold text-sm text-stone-100">
+                                    {r.name}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-stone-500 font-mono mt-0.5 block">
+                                  {r.createdAt ? new Date(r.createdAt).toLocaleString("ko-KR") : "-"}
+                                </span>
+                              </div>
+
+                              {isHidden ? (
+                                <span className="px-2 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-800 text-[10px] font-bold flex items-center gap-1 shrink-0">
+                                  <EyeOff className="w-3 h-3" />
+                                  <span>게시판 숨김됨</span>
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold flex items-center gap-1 shrink-0">
+                                  <Eye className="w-3 h-3" />
+                                  <span>게시판 노출 중</span>
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Photo thumbnail if exists */}
+                            {r.photo && (
+                              <div
+                                className="relative mb-2.5 rounded-xl overflow-hidden border border-amber-600/30 bg-stone-950 h-32 group cursor-pointer"
+                                onClick={() => setPreviewPhoto(r.photo || null)}
+                              >
+                                <img
+                                  src={r.photo}
+                                  alt={`${r.name} 사진`}
+                                  className="w-full h-full object-cover group-hover:scale-105 transition"
+                                />
+                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-[11px] font-bold text-stone-200 gap-1">
+                                  <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>사진 크게보기</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Content text */}
+                            <p className="text-xs text-stone-300 leading-relaxed whitespace-pre-wrap line-clamp-4 font-medium mb-3">
+                              {r.content}
+                            </p>
+                          </div>
+
+                          {/* Card Action Button */}
+                          <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between">
+                            <span className="text-[10px] text-stone-500">
+                              {isHidden ? "게시판에서 숨겨진 상태입니다" : "클리어 유저에게 노출 중입니다"}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleReview(r.pin, !isHidden)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                                isHidden
+                                  ? "bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 border border-emerald-600"
+                                  : "bg-red-950/90 hover:bg-red-900 text-red-200 border border-red-700"
+                              }`}
+                            >
+                              {isHidden ? (
+                                <>
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>게시판에 노출하기</span>
+                                </>
+                              ) : (
+                                <>
+                                  <EyeOff className="w-3.5 h-3.5" />
+                                  <span>게시판에서 숨기기</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </>
+          )}
         </section>
 
         {/* Participant Table Controls & List - Full Desktop Table */}
@@ -815,7 +947,7 @@ export default function AdminPage() {
               <thead className="sticky top-0 z-10 bg-[#221b17] text-stone-400 border-b border-stone-800 font-mono shadow-sm">
                 <tr>
                   <th className="py-3.5 px-5">수사 암호</th>
-                  <th className="py-3.5 px-5">참가자 닉네임</th>
+                  <th className="py-3.5 px-5 min-w-[200px]">참가자 이름 / 메모 (수정 가능)</th>
                   <th className="py-3.5 px-5">현재 위치</th>
                   <th className="py-3.5 px-5">현재 방 체류시간</th>
                   <th className="py-3.5 px-5">총 소요시간</th>
@@ -844,8 +976,38 @@ export default function AdminPage() {
                         <td className="py-3.5 px-5 font-mono font-bold text-amber-400 text-sm">
                           {u.pin}
                         </td>
-                        <td className="py-3.5 px-5 font-bold text-stone-200">
-                          {u.nickname}
+                        <td className="py-2.5 px-4 font-bold text-stone-200">
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={editingMemos[u.pin] !== undefined ? editingMemos[u.pin] : u.nickname}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setEditingMemos((prev) => ({ ...prev, [u.pin]: val }));
+                              }}
+                              onBlur={(e) => {
+                                const val = e.target.value.trim();
+                                if (val !== u.nickname) {
+                                  handleSaveMemo(u.pin, val);
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.currentTarget.blur();
+                                }
+                              }}
+                              placeholder="참가자 메모 입력"
+                              className="w-36 lg:w-48 px-2.5 py-1.5 rounded-lg bg-stone-900 border border-stone-700/80 hover:border-amber-500/60 focus:border-amber-500 text-xs text-stone-100 placeholder-stone-600 focus:outline-none transition font-medium"
+                              title="이름 또는 메모를 입력하고 Enter를 누르면 저장됩니다"
+                            />
+                            {savingPins[u.pin] ? (
+                              <span className="text-[10px] text-amber-400 animate-pulse font-mono shrink-0">저장중...</span>
+                            ) : savedPins[u.pin] ? (
+                              <span className="text-[10px] text-emerald-400 font-bold font-mono shrink-0 flex items-center gap-0.5">
+                                <Check className="w-3 h-3" /> 저장됨
+                              </span>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="py-3.5 px-5">
                           {u.isCleared ? (
@@ -874,8 +1036,11 @@ export default function AdminPage() {
                             ? formatLiveStayTime(u.startedAt)
                             : "-"}
                         </td>
-                        <td className="py-3.5 px-5 font-mono text-stone-400">
-                          {u.unlockedHints?.length || 0}개 사용
+                        <td className="py-3.5 px-5 font-mono text-stone-300">
+                          <span className="font-bold text-amber-400">{u.totalHintsUsed ?? 0}</span>개 사용
+                          {u.unlockedHints && u.unlockedHints.length > 0 && !u.isCleared && (
+                            <span className="text-[11px] text-stone-500 ml-1.5">(현 Q{u.currentRoom}: {u.unlockedHints.length}개)</span>
+                          )}
                         </td>
                         <td className="py-3.5 px-5">
                           {u.isCleared ? (

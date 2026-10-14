@@ -9,7 +9,6 @@ export default function HomePage() {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
-  const [nicknameInput, setNicknameInput] = useState("");
   const [existingSession, setExistingSession] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -37,16 +36,15 @@ export default function HomePage() {
     }
   }, []);
 
-  const handleLogin = async (code: string, nickname?: string) => {
+  const handleLogin = async (code: string) => {
     setIsLoading(true);
     setErrorMsg(null);
     try {
       const cleanCode = code.trim().toUpperCase();
-      const cleanName = nickname?.trim();
       const res = await fetch("/api/auth/pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin: cleanCode, nickname: cleanName }),
+        body: JSON.stringify({ pin: cleanCode }),
       });
       const data = await res.json();
 
@@ -89,12 +87,7 @@ export default function HomePage() {
       setErrorMsg("수사 암호를 입력해주세요.");
       return;
     }
-    const cleanName = nicknameInput.trim();
-    if (!cleanName || cleanName.length < 2) {
-      setErrorMsg("이름을 2글자 이상 필수로 입력해주세요.");
-      return;
-    }
-    handleLogin(passwordInput, cleanName);
+    handleLogin(passwordInput);
   };
 
   return (
@@ -219,23 +212,6 @@ export default function HomePage() {
                   autoCapitalize="characters"
                   autoCorrect="off"
                   spellCheck="false"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-amber-400 mb-1.5 flex items-center justify-between">
-                  <span>참가자 이름</span>
-                  <span className="text-[10px] text-amber-500 font-semibold">(필수, 2글자 이상)</span>
-                </label>
-                <input
-                  type="text"
-                  minLength={2}
-                  maxLength={15}
-                  value={nicknameInput}
-                  onChange={(e) => setNicknameInput(e.target.value)}
-                  placeholder="이름을 입력하세요 (2글자 이상)"
-                  className="w-full px-4 py-3 rounded-xl bg-stone-900 border-2 border-stone-700 text-stone-100 text-sm focus:outline-none focus:border-amber-500"
                   required
                 />
               </div>

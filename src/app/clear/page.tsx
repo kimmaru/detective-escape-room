@@ -170,7 +170,6 @@ export default function ClearPage() {
           clearedAt: parsed.clearedAt || Date.now(),
           totalTimeSeconds: parsed.totalTimeSeconds || 0,
           totalHintsUsed: parsed.totalHintsUsed || 0,
-          nickname: parsed.nickname,
           hasReviewed: parsed.hasReviewed,
           review: parsed.review,
         }),
