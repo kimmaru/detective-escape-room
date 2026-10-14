@@ -155,7 +155,21 @@ export default function AdminPage() {
     }
   };
 
-  const handleToggleReview = async (pin: string, hide: boolean) => {
+  const handleToggleReview = async (pin: string, targetHide: boolean) => {
+    // 1. 즉각적인 UI 반영 (낙관적 업데이트)
+    setStats((prev) => {
+      if (!prev || !prev.reviews) return prev;
+      const updatedReviews = prev.reviews.map((r) =>
+        r.pin.toUpperCase() === pin.trim().toUpperCase() ? { ...r, hidden: targetHide } : r
+      );
+      const hiddenCount = updatedReviews.filter((r) => r.hidden).length;
+      return {
+        ...prev,
+        reviews: updatedReviews,
+        hiddenReviews: hiddenCount,
+      };
+    });
+
     try {
       const res = await fetch("/api/admin/action", {
         method: "POST",
@@ -163,7 +177,7 @@ export default function AdminPage() {
         body: JSON.stringify({
           action: "toggleReview",
           pin,
-          hide,
+          hide: targetHide,
           adminKey,
         }),
       });
@@ -174,9 +188,11 @@ export default function AdminPage() {
         fetchStats();
       } else {
         alert(data.error || "후기 상태 변경 실패");
+        fetchStats();
       }
     } catch {
       alert("서버 통신 실패");
+      fetchStats();
     }
   };
 
@@ -708,7 +724,7 @@ export default function AdminPage() {
                         </span>
                         <button
                           type="button"
-                          onClick={() => handleToggleReview(r.pin, isHidden)}
+                          onClick={() => handleToggleReview(r.pin, !isHidden)}
                           className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
                             isHidden
                               ? "bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 border border-emerald-600"

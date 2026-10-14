@@ -46,10 +46,18 @@ export function getAllReviews(includeHidden = false): Array<ReviewData & { pin: 
 function saveReviewToCache(reviewWithPin: ReviewData & { pin: string }) {
   try {
     const list = getAllReviews(true);
-    const existing = list.find((r) => r.pin === reviewWithPin.pin);
-    const hidden = reviewWithPin.hidden !== undefined ? reviewWithPin.hidden : existing?.hidden;
+    const existing = list.find(
+      (r) => r.pin.toUpperCase() === reviewWithPin.pin.toUpperCase()
+    );
+    // If existing has a hidden flag, preserve it unless explicitly provided
+    const hidden =
+      existing?.hidden !== undefined
+        ? existing.hidden
+        : (reviewWithPin.hidden ?? false);
 
-    const filtered = list.filter((r) => r.pin !== reviewWithPin.pin);
+    const filtered = list.filter(
+      (r) => r.pin.toUpperCase() !== reviewWithPin.pin.toUpperCase()
+    );
     filtered.unshift({ ...reviewWithPin, hidden });
     fs.writeFileSync(REVIEWS_FILE, JSON.stringify(filtered, null, 2));
   } catch (e) {
@@ -63,7 +71,11 @@ export function toggleReviewVisibility(
 ): { success: boolean; hidden?: boolean } {
   const cleanPin = resolvePin(pin);
   const reviews = getAllReviews(true);
-  const target = reviews.find((r) => r.pin === cleanPin);
+  const target = reviews.find(
+    (r) =>
+      r.pin.toUpperCase() === cleanPin.toUpperCase() ||
+      r.pin.toUpperCase() === pin.trim().toUpperCase()
+  );
   if (!target) {
     return { success: false };
   }
@@ -78,8 +90,25 @@ export function toggleReviewVisibility(
   }
 
   const store = getStore();
-  if (store.sessions[cleanPin] && store.sessions[cleanPin].review) {
-    store.sessions[cleanPin].review!.hidden = newHidden;
+  const sessionKey =
+    store.sessions[cleanPin]
+      ? cleanPin
+      : Object.keys(store.sessions).find(
+          (k) => k.toUpperCase() === pin.trim().toUpperCase()
+        );
+
+  if (sessionKey && store.sessions[sessionKey]) {
+    if (store.sessions[sessionKey].review) {
+      store.sessions[sessionKey].review!.hidden = newHidden;
+    } else {
+      store.sessions[sessionKey].review = {
+        name: target.name,
+        content: target.content,
+        photo: target.photo,
+        createdAt: target.createdAt,
+        hidden: newHidden,
+      };
+    }
     savePersistedSessions(store.sessions);
   }
 
@@ -233,16 +262,19 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
   if (clientState.hasReviewed || clientState.review) {
     session.hasReviewed = true;
     if (clientState.review) {
+      // Preserve existing hidden state if already set by admin
+      const isHidden = session.review?.hidden === true;
       session.review = {
         ...session.review,
         ...clientState.review,
+        hidden: isHidden,
       };
       saveReviewToCache({
         name: session.review.name || session.nickname || "명탐정",
         content: session.review.content || "",
         photo: session.review.photo || null,
         createdAt: session.review.createdAt || Date.now(),
-        hidden: session.review.hidden || false,
+        hidden: isHidden,
         pin,
       });
     }

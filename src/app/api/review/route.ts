@@ -161,13 +161,17 @@ export async function GET(req: NextRequest) {
     }
 
     const reviews = getAllReviews(false);
+    const myReview = session.review || null;
+    const myReviewHidden = !!myReview?.hidden;
+
     return NextResponse.json(
       {
         success: true,
         isCleared: true,
         hasReviewed: !!session.hasReviewed,
         myPin: session.pin,
-        myReview: session.review || null,
+        myReview: myReviewHidden ? null : myReview,
+        myReviewHidden,
         total: reviews.length,
         reviews,
       },

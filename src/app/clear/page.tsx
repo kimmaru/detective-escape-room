@@ -77,27 +77,6 @@ export default function ClearPage() {
     setIsLoadingBoard(true);
     setBoardError(null);
 
-    // 로컬 스토리지에 등록된 내 후기가 있다면 백그라운드에서 서버와 즉시 동기화
-    try {
-      const saved = typeof window !== "undefined" ? localStorage.getItem("escape_session") : null;
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed.review) {
-          fetch("/api/game/sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              pin: activePin,
-              isCleared: true,
-              currentRoom: 11,
-              hasReviewed: true,
-              review: parsed.review,
-            }),
-          }).catch(() => {});
-        }
-      }
-    } catch {}
-
     try {
       const res = await fetch(
         `/api/review?pin=${encodeURIComponent(activePin)}&cleared=true&t=${Date.now()}`,
@@ -117,12 +96,12 @@ export default function ClearPage() {
 
       let list: ReviewItem[] = Array.isArray(data.reviews) ? data.reviews : [];
 
-      // 현재 내 후기가 로컬스토리지에 있는데 서버 목록에 아직 없으면 맨 앞에 합성
+      // 현재 내 후기가 로컬스토리지에 있는데 서버 목록에 아직 없으면 맨 앞에 합성 (관리자가 숨김 처리한 경우 제외)
       try {
         const saved = localStorage.getItem("escape_session");
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (parsed.review && !list.some((r) => r.pin === activePin)) {
+          if (parsed.review && !data.myReviewHidden && !list.some((r) => r.pin === activePin)) {
             list.unshift({
               pin: activePin,
               name: parsed.review.name || parsed.nickname || "명탐정",
@@ -355,19 +334,7 @@ export default function ClearPage() {
       totalTimeSeconds: session?.totalTimeSeconds || 0,
     };
 
-    // 1) 구글 웹앱 URL 백업 전송
-    const googleSheetUrl =
-      "https://script.google.com/macros/s/AKfycbxKY3sFsMUaUN2fuYFXLcSDrzlc7SC7PcBxZtHBWa0YRkoUg-bCJVTrCYouFnuLMqu9-w/exec";
-    try {
-      fetch(googleSheetUrl, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }).catch(() => {});
-    } catch {}
-
-    // 2) 서버 API 호출
+    // 1) 서버 API 호출 (서버에서 Google Sheets로 1회 안전하게 전송됨)
     try {
       const res = await fetch("/api/review", {
         method: "POST",
@@ -435,6 +402,18 @@ export default function ClearPage() {
       alert("소중한 후기와 사진이 성공적으로 등록되었습니다! 🎉");
     } catch (err) {
       console.error("Submit review error:", err);
+      // 서버 장애 시에만 Google Sheets로 비상 1회 전송
+      try {
+        fetch(
+          "https://script.google.com/macros/s/AKfycbxKY3sFsMUaUN2fuYFXLcSDrzlc7SC7PcBxZtHBWa0YRkoUg-bCJVTrCYouFnuLMqu9-w/exec",
+          {
+            method: "POST",
+            mode: "no-cors",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }
+        ).catch(() => {});
+      } catch {}
       const fallbackReview = {
         name: reviewerName.trim(),
         content: reviewText.trim(),

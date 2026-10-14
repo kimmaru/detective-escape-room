@@ -24,13 +24,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "toggleReview" && pin) {
-      const res = toggleReviewVisibility(pin, hide);
+      const cleanPin = String(pin).trim();
+      const hideBool = typeof hide === "boolean" ? hide : undefined;
+      const res = toggleReviewVisibility(cleanPin, hideBool);
       if (!res.success) {
         return NextResponse.json({ error: "해당 후기를 찾을 수 없습니다." }, { status: 404 });
       }
       return NextResponse.json({
         success: true,
-        message: `${pin}번 참가자의 후기가 ${res.hidden ? "숨김" : "노출"} 처리되었습니다.`,
+        message: `${cleanPin}번 참가자의 후기가 ${res.hidden ? "숨김" : "노출"} 처리되었습니다.`,
         hidden: res.hidden,
       });
     }
