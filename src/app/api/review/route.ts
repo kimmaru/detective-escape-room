@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  submitReview,
-  getSession,
+  submitReviewAsync,
+  getSessionAsync,
   getAllReviewsAsync,
   fetchHiddenPins,
-  syncClientSession,
+  syncClientSessionAsync,
   syncReviewsFromGoogleSheet,
 } from "@/lib/store";
 
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let session = getSession(pin);
+    let session = await getSessionAsync(pin);
     if (!session) {
       return NextResponse.json(
         { success: false, message: "유효하지 않은 수사 암호입니다." },
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     // 서버리스 환경 대응: 클라이언트에서 클리어 상태를 보냈거나 currentRoom > 10인 경우 세션 동기화
     if (isCleared || currentRoom > 10) {
-      session = syncClientSession({
+      session = await syncClientSessionAsync({
         pin,
         isCleared: true,
         currentRoom: 11,
@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = submitReview(pin, {
+    const result = await submitReviewAsync(pin, {
       name,
       content,
       photo: photo || null,
@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    let session = getSession(pin);
+    let session = await getSessionAsync(pin);
     if (!session) {
       return NextResponse.json(
         { success: false, message: "유효하지 않은 수사 암호입니다." },
@@ -153,7 +153,7 @@ export async function GET(req: NextRequest) {
 
     // 클라이언트가 클리어 상태로 요청 시 서버 세션 동기화
     if (isClientCleared && !session.isCleared) {
-      session = syncClientSession({ pin, isCleared: true, currentRoom: 11 });
+      session = await syncClientSessionAsync({ pin, isCleared: true, currentRoom: 11 });
     }
 
     // 클리어한 사람만 후기 게시판을 볼 수 있도록 통제

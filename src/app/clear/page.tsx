@@ -95,30 +95,21 @@ export default function ClearPage() {
         return;
       }
 
-      let list: ReviewItem[] = Array.isArray(data.reviews) ? data.reviews : [];
+      const list: ReviewItem[] = Array.isArray(data.reviews) ? data.reviews : [];
 
-      // 현재 내 후기가 로컬스토리지에 있는데 서버 목록에 아직 없으면 맨 앞에 합성 (관리자가 숨김 처리한 경우 제외)
-      try {
-        const saved = localStorage.getItem("escape_session");
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (data.myReviewHidden) {
-            // 관리자가 숨김 처리한 경우 로컬 스토리지도 hidden 동기화하여 절대 게시판에 재합성되지 않도록 차단
+      // 관리자가 숨김 처리한 경우 로컬 스토리지도 hidden 동기화하여 일관성 유지
+      if (data.myReviewHidden) {
+        try {
+          const saved = localStorage.getItem("escape_session");
+          if (saved) {
+            const parsed = JSON.parse(saved);
             if (parsed.review) {
               parsed.review.hidden = true;
               localStorage.setItem("escape_session", JSON.stringify(parsed));
             }
-          } else if (parsed.review && !parsed.review.hidden && !list.some((r) => r.pin === activePin)) {
-            list.unshift({
-              pin: activePin,
-              name: parsed.review.name || parsed.nickname || "명탐정",
-              content: parsed.review.content,
-              photo: parsed.review.photo,
-              createdAt: parsed.review.createdAt || Date.now(),
-            });
           }
-        }
-      } catch {}
+        } catch {}
+      }
 
       setBoardReviews(list);
       if (data.hasReviewed) {
@@ -159,7 +150,7 @@ export default function ClearPage() {
       }
       setIsAuthChecking(false);
 
-      // 서버리스 람다에 세션 클리어 상태 및 기존 후기 동기화 (백그라운드)
+      // 서버리스 람다에 세션 클리어 상태 동기화 (백그라운드 - 후기는 단일 진실 소스 보장을 위해 제외)
       fetch("/api/game/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -170,8 +161,6 @@ export default function ClearPage() {
           clearedAt: parsed.clearedAt || Date.now(),
           totalTimeSeconds: parsed.totalTimeSeconds || 0,
           totalHintsUsed: parsed.totalHintsUsed || 0,
-          hasReviewed: parsed.hasReviewed,
-          review: parsed.review,
         }),
       }).catch(() => {});
 

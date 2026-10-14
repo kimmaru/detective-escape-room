@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { passRoomAdmin, resetSession, toggleReviewVisibility, updateSessionNickname } from "@/lib/store";
+import { passRoomAdminAsync, resetSessionAsync, toggleReviewVisibility, updateSessionNickname } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -23,12 +23,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "pass" && pin) {
-      const res = passRoomAdmin(pin);
+      const res = await passRoomAdminAsync(pin);
       return NextResponse.json(res);
     }
 
     if (action === "reset") {
-      resetSession(pin);
+      await resetSessionAsync(pin);
       return NextResponse.json({ success: true, message: pin ? `${pin}번 유저가 초기화되었습니다.` : "전체 유저가 초기화되었습니다." });
     }
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/store";
+import { getSessionAsync } from "@/lib/store";
 import { PUZZLES } from "@/data/puzzles";
 
 export async function GET(req: NextRequest) {
@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "PIN is required" }, { status: 400 });
   }
 
-  const session = getSession(pin);
+  const session = await getSessionAsync(pin);
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }

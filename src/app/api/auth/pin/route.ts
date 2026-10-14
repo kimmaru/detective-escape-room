@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { startOrResumeSession } from "@/lib/store";
+import { startOrResumeSessionAsync } from "@/lib/store";
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
     }
 
     const cleanPin = pin.trim().toUpperCase();
-    const session = startOrResumeSession(cleanPin);
+    const session = await startOrResumeSessionAsync(cleanPin);
 
     const res = NextResponse.json({
       success: true,

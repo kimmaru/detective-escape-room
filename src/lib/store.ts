@@ -4,6 +4,12 @@ import { put } from "@vercel/blob";
 import { PlayerSession, ReviewData, generateDefaultPins } from "../data/pins";
 import { PUZZLES } from "../data/puzzles";
 import { SEED_REVIEWS } from "../data/seedReviews";
+import {
+  getSupabaseAdmin,
+  isSupabaseConfigured,
+  DbSession,
+  DbReview,
+} from "./supabase";
 
 const CACHE_FILE = path.join("/tmp", "escaperoom_sessions.json");
 const REVIEWS_FILE = path.join("/tmp", "escaperoom_reviews.json");
@@ -25,9 +31,72 @@ const DEFAULT_HIDDEN_PINS = [
 let cachedHiddenPins: Set<string> = new Set(DEFAULT_HIDDEN_PINS);
 let lastHiddenPinsFetchAt = 0;
 
+// ==============================================================================
+// 1. DTO Mappers: Supabase PostgreSQL <-> TypeScript Domain Models
+// ==============================================================================
+
+function dbSessionToPlayerSession(
+  db: DbSession,
+  review?: ReviewData
+): PlayerSession {
+  return {
+    pin: db.pin,
+    nickname: db.nickname,
+    currentRoom: db.current_room,
+    startedAt: db.started_at ? Number(db.started_at) : null,
+    roomEnteredAt: db.room_entered_at ? Number(db.room_entered_at) : null,
+    unlockedHints: Array.isArray(db.unlocked_hints) ? db.unlocked_hints : [],
+    lastHintUnlockedAt: db.last_hint_unlocked_at
+      ? Number(db.last_hint_unlocked_at)
+      : null,
+    isCleared: !!db.is_cleared,
+    clearedAt: db.cleared_at ? Number(db.cleared_at) : null,
+    totalTimeSeconds: db.total_time_seconds || 0,
+    totalHintsUsed: db.total_hints_used || 0,
+    lastActiveAt: db.last_active_at ? Number(db.last_active_at) : null,
+    status: db.status || (db.is_cleared ? "cleared" : "ready"),
+    hasReviewed: !!db.has_reviewed,
+    review,
+  };
+}
+
+function dbReviewToReviewData(db: DbReview): ReviewData & { pin: string } {
+  return {
+    pin: db.pin,
+    name: db.author_name,
+    content: db.content,
+    photo: db.photo_url || null,
+    createdAt: Number(db.created_at),
+    hidden: !!db.is_hidden,
+  };
+}
+
+// ==============================================================================
+// 2. Hidden Pins Management (Fallback / In-Memory Cache)
+// ==============================================================================
+
 export async function fetchHiddenPins(): Promise<Set<string>> {
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from("escape_reviews")
+          .select("pin")
+          .eq("is_hidden", true);
+        if (!error && data) {
+          cachedHiddenPins = new Set(
+            data.map((r: { pin: string }) => r.pin.trim().toUpperCase())
+          );
+          return cachedHiddenPins;
+        }
+      } catch (e) {
+        console.warn("Supabase fetch hidden reviews failed:", e);
+      }
+    }
+  }
+
   const now = Date.now();
-  // Fetch from Blob at most every 1000ms for snappy updates across all lambdas
   if (now - lastHiddenPinsFetchAt < 1000 && cachedHiddenPins.size > 0) {
     return cachedHiddenPins;
   }
@@ -47,7 +116,9 @@ export async function fetchHiddenPins(): Promise<Set<string>> {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
-        cachedHiddenPins = new Set(data.map((p) => String(p).trim().toUpperCase()));
+        cachedHiddenPins = new Set(
+          data.map((p) => String(p).trim().toUpperCase())
+        );
         return cachedHiddenPins;
       }
     }
@@ -55,12 +126,13 @@ export async function fetchHiddenPins(): Promise<Set<string>> {
     console.warn("Failed to fetch hidden pins from Blob:", e);
   }
 
-  // Fallback: local /tmp file
   try {
     if (fs.existsSync(HIDDEN_FILE)) {
       const data = JSON.parse(fs.readFileSync(HIDDEN_FILE, "utf-8"));
       if (Array.isArray(data)) {
-        cachedHiddenPins = new Set(data.map((p) => String(p).trim().toUpperCase()));
+        cachedHiddenPins = new Set(
+          data.map((p) => String(p).trim().toUpperCase())
+        );
       }
     }
   } catch {}
@@ -73,12 +145,10 @@ export async function saveHiddenPins(pinsSet: Set<string>): Promise<void> {
   lastHiddenPinsFetchAt = Date.now();
   const arr = Array.from(pinsSet);
 
-  // 1. Write to local /tmp
   try {
     fs.writeFileSync(HIDDEN_FILE, JSON.stringify(arr, null, 2));
   } catch {}
 
-  // 2. Write to Vercel Blob (durable across all lambdas!)
   try {
     await put("hidden_reviews.json", JSON.stringify(arr), {
       access: "public",
@@ -90,13 +160,41 @@ export async function saveHiddenPins(pinsSet: Set<string>): Promise<void> {
   }
 }
 
+// ==============================================================================
+// 3. Admin Memos & Nicknames
+// ==============================================================================
+
 const MEMOS_FILE = path.join("/tmp", "escaperoom_admin_memos.json");
 let cachedAdminMemos: Record<string, string> = {};
 let lastAdminMemosFetchAt = 0;
 
 export async function fetchAdminMemos(): Promise<Record<string, string>> {
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from("escape_sessions")
+          .select("pin, nickname");
+        if (!error && data) {
+          const map: Record<string, string> = {};
+          data.forEach((r: { pin: string; nickname: string }) => {
+            map[r.pin.trim().toUpperCase()] = r.nickname;
+          });
+          cachedAdminMemos = map;
+          return cachedAdminMemos;
+        }
+      } catch (e) {
+        console.warn("Supabase fetch memos failed:", e);
+      }
+    }
+  }
+
   const now = Date.now();
-  if (now - lastAdminMemosFetchAt < 2000 && Object.keys(cachedAdminMemos).length > 0) {
+  if (
+    now - lastAdminMemosFetchAt < 2000 &&
+    Object.keys(cachedAdminMemos).length > 0
+  ) {
     return cachedAdminMemos;
   }
   lastAdminMemosFetchAt = now;
@@ -138,7 +236,9 @@ export async function fetchAdminMemos(): Promise<Record<string, string>> {
   return cachedAdminMemos;
 }
 
-export async function saveAdminMemos(memos: Record<string, string>): Promise<void> {
+export async function saveAdminMemos(
+  memos: Record<string, string>
+): Promise<void> {
   cachedAdminMemos = memos;
   lastAdminMemosFetchAt = Date.now();
 
@@ -157,14 +257,38 @@ export async function saveAdminMemos(memos: Record<string, string>): Promise<voi
   }
 }
 
-export async function updateSessionNickname(pin: string, newNickname: string): Promise<boolean> {
+export async function updateSessionNickname(
+  pin: string,
+  newNickname: string
+): Promise<boolean> {
   const cleanPin = resolvePin(pin).toUpperCase();
+  const trimmed = newNickname.trim() || `탐정_${cleanPin}`;
+
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from("escape_sessions")
+          .update({ nickname: trimmed })
+          .eq("pin", cleanPin);
+        if (!error) {
+          cachedAdminMemos[cleanPin] = trimmed;
+          return true;
+        }
+        console.error("Supabase update nickname failed:", error);
+      } catch (e) {
+        console.error("Supabase update nickname exception:", e);
+      }
+    }
+  }
+
+  // Fallback to local store & Blob
   const store = getStore();
   const session = store.sessions[cleanPin];
   if (!session) return false;
 
-  const trimmed = newNickname.trim();
-  session.nickname = trimmed || `탐정_${cleanPin}`;
+  session.nickname = trimmed;
   store.sessions[cleanPin] = session;
   savePersistedSessions(store.sessions);
 
@@ -175,9 +299,37 @@ export async function updateSessionNickname(pin: string, newNickname: string): P
   return true;
 }
 
+// ==============================================================================
+// 4. Reviews Management (Supabase SSOT + Graceful Fallback)
+// ==============================================================================
+
 export async function getAllReviewsAsync(
   includeHidden = false
 ): Promise<Array<ReviewData & { pin: string }>> {
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      try {
+        let query = supabase
+          .from("escape_reviews")
+          .select("pin, author_name, content, photo_url, is_hidden, created_at")
+          .order("created_at", { ascending: false });
+
+        if (!includeHidden) {
+          query = query.eq("is_hidden", false);
+        }
+
+        const { data, error } = await query;
+        if (!error && data) {
+          return data.map((d: DbReview) => dbReviewToReviewData(d));
+        }
+        console.error("Supabase getAllReviewsAsync error:", error);
+      } catch (e) {
+        console.warn("Supabase getAllReviewsAsync failed:", e);
+      }
+    }
+  }
+
   const hiddenPins = await fetchHiddenPins();
   return getMergedReviews(includeHidden, hiddenPins);
 }
@@ -194,7 +346,6 @@ function getMergedReviews(
 ): Array<ReviewData & { pin: string }> {
   const reviewMap = new Map<string, ReviewData & { pin: string }>();
 
-  // 1. Pre-seed default reviews from spreadsheet
   SEED_REVIEWS.forEach((r) => {
     const pinKey = r.pin.toUpperCase();
     reviewMap.set(pinKey, {
@@ -203,7 +354,6 @@ function getMergedReviews(
     });
   });
 
-  // 2. Read from persistent file cache (overrides seeds with user's modifications & hidden flags)
   try {
     if (fs.existsSync(REVIEWS_FILE)) {
       const data = fs.readFileSync(REVIEWS_FILE, "utf-8");
@@ -224,7 +374,6 @@ function getMergedReviews(
     console.error("Failed to load reviews from /tmp:", e);
   }
 
-  // 3. Merge reviews from active sessions
   if (globalThis.__escapeStore?.sessions) {
     Object.values(globalThis.__escapeStore.sessions).forEach((s) => {
       const pinKey = s.pin.toUpperCase();
@@ -238,7 +387,6 @@ function getMergedReviews(
     });
   }
 
-  // Sort by newest first
   const list = Array.from(reviewMap.values())
     .map((r) => ({
       ...r,
@@ -253,7 +401,7 @@ const GOOGLE_SHEET_CSV_URL =
   "https://docs.google.com/spreadsheets/d/1hxHY2paDQP1E3iWw1ZPhusdFvKLAk86mxvk0l4aVQgA/export?format=csv";
 
 let lastSheetSyncAt = 0;
-const SHEET_SYNC_INTERVAL = 15 * 1000; // 15초 쿨다운
+const SHEET_SYNC_INTERVAL = 15 * 1000;
 
 export async function syncReviewsFromGoogleSheet(): Promise<void> {
   const now = Date.now();
@@ -268,11 +416,7 @@ export async function syncReviewsFromGoogleSheet(): Promise<void> {
     if (lines.length <= 1) return;
 
     const hiddenPins = await fetchHiddenPins();
-    const list = getAllReviews(true);
-    const map = new Map<string, ReviewData & { pin: string }>();
-    list.forEach((r) => map.set(r.pin.toUpperCase(), r));
-
-    let hasUpdates = false;
+    const supabase = isSupabaseConfigured() ? getSupabaseAdmin() : null;
 
     for (let i = 1; i < lines.length; i++) {
       const row: string[] = [];
@@ -308,30 +452,35 @@ export async function syncReviewsFromGoogleSheet(): Promise<void> {
         }
 
         const cleanPin = pin.trim().toUpperCase();
-        const existing = map.get(cleanPin);
+        const parsedDate = new Date(
+          dateStr.replace(" ", "T") + "+09:00"
+        ).getTime();
+        const createdAt = !isNaN(parsedDate) ? parsedDate : Date.now();
+        const isHidden = hiddenPins.has(cleanPin);
 
-        if (!existing) {
-          const parsedDate = new Date(dateStr.replace(" ", "T") + "+09:00").getTime();
-          map.set(cleanPin, {
-            pin,
+        if (supabase) {
+          await supabase.from("escape_reviews").upsert(
+            {
+              pin: cleanPin,
+              author_name: name || "익명 탐정",
+              content,
+              photo_url: photo,
+              is_hidden: isHidden,
+              created_at: createdAt,
+            },
+            { onConflict: "pin" }
+          );
+        } else {
+          saveReviewToCache({
+            pin: cleanPin,
             name: name || "익명 탐정",
             content,
             photo,
-            createdAt: !isNaN(parsedDate) ? parsedDate : Date.now(),
-            hidden: hiddenPins.has(cleanPin),
+            createdAt,
+            hidden: isHidden,
           });
-          hasUpdates = true;
-        } else {
-          existing.hidden = hiddenPins.has(cleanPin);
         }
       }
-    }
-
-    if (hasUpdates) {
-      const mergedList = Array.from(map.values()).sort(
-        (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
-      );
-      fs.writeFileSync(REVIEWS_FILE, JSON.stringify(mergedList, null, 2));
     }
   } catch (e) {
     console.error("Failed to sync reviews from Google Sheet:", e);
@@ -342,11 +491,10 @@ function saveReviewToCache(reviewWithPin: ReviewData & { pin: string }) {
   try {
     const list = getAllReviews(true);
     const pinKey = reviewWithPin.pin.toUpperCase();
-    const isHidden = cachedHiddenPins.has(pinKey) || reviewWithPin.hidden === true;
+    const isHidden =
+      cachedHiddenPins.has(pinKey) || reviewWithPin.hidden === true;
 
-    const filtered = list.filter(
-      (r) => r.pin.toUpperCase() !== pinKey
-    );
+    const filtered = list.filter((r) => r.pin.toUpperCase() !== pinKey);
     filtered.unshift({ ...reviewWithPin, hidden: isHidden });
     fs.writeFileSync(REVIEWS_FILE, JSON.stringify(filtered, null, 2));
   } catch (e) {
@@ -365,6 +513,33 @@ export async function toggleReviewVisibility(
   const isCurrentlyHidden = hiddenPins.has(cleanPin) || hiddenPins.has(rawPin);
   const newHidden = hide !== undefined ? hide : !isCurrentlyHidden;
 
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from("escape_reviews")
+          .update({ is_hidden: newHidden })
+          .or(`pin.eq.${cleanPin},pin.eq.${rawPin}`);
+
+        if (!error) {
+          if (newHidden) {
+            hiddenPins.add(cleanPin);
+            hiddenPins.add(rawPin);
+          } else {
+            hiddenPins.delete(cleanPin);
+            hiddenPins.delete(rawPin);
+          }
+          await saveHiddenPins(hiddenPins);
+          return { success: true, hidden: newHidden };
+        }
+      } catch (e) {
+        console.error("Supabase toggleReviewVisibility error:", e);
+      }
+    }
+  }
+
+  // Fallback
   if (newHidden) {
     hiddenPins.add(cleanPin);
     hiddenPins.add(rawPin);
@@ -372,40 +547,21 @@ export async function toggleReviewVisibility(
     hiddenPins.delete(cleanPin);
     hiddenPins.delete(rawPin);
   }
-
   await saveHiddenPins(hiddenPins);
 
-  // Sync /tmp cache
   try {
     const list = getAllReviews(true);
     fs.writeFileSync(REVIEWS_FILE, JSON.stringify(list, null, 2));
   } catch {}
 
   const store = getStore();
-  const sessionKey =
-    store.sessions[cleanPin]
-      ? cleanPin
-      : Object.keys(store.sessions).find(
-          (k) => k.toUpperCase() === rawPin
-        );
+  const sessionKey = store.sessions[cleanPin]
+    ? cleanPin
+    : Object.keys(store.sessions).find((k) => k.toUpperCase() === rawPin);
 
   if (sessionKey && store.sessions[sessionKey]) {
     if (store.sessions[sessionKey].review) {
       store.sessions[sessionKey].review!.hidden = newHidden;
-    } else {
-      const reviews = getAllReviews(true);
-      const target = reviews.find(
-        (r) => r.pin.toUpperCase() === cleanPin || r.pin.toUpperCase() === rawPin
-      );
-      if (target) {
-        store.sessions[sessionKey].review = {
-          name: target.name,
-          content: target.content,
-          photo: target.photo,
-          createdAt: target.createdAt,
-          hidden: newHidden,
-        };
-      }
     }
     savePersistedSessions(store.sessions);
   }
@@ -413,6 +569,9 @@ export async function toggleReviewVisibility(
   return { success: true, hidden: newHidden };
 }
 
+// ==============================================================================
+// 5. Sessions Management (Supabase SSOT + Fallback)
+// ==============================================================================
 
 interface GlobalStore {
   sessions: Record<string, PlayerSession>;
@@ -430,7 +589,6 @@ function loadPersistedSessions(): Record<string, PlayerSession> {
     if (fs.existsSync(CACHE_FILE)) {
       const data = fs.readFileSync(CACHE_FILE, "utf-8");
       const parsed = JSON.parse(data);
-      // Merge with default pins to ensure all 100 exist
       sessions = { ...defaultPins, ...parsed };
     }
   } catch (e) {
@@ -476,6 +634,39 @@ export function getAllSessions(): PlayerSession[] {
 }
 
 export async function getAllSessionsAsync(): Promise<PlayerSession[]> {
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      try {
+        const [sessionsRes, reviewsRes] = await Promise.all([
+          supabase.from("escape_sessions").select("*").order("pin", { ascending: true }),
+          supabase.from("escape_reviews").select("*"),
+        ]);
+
+        if (!sessionsRes.error && sessionsRes.data) {
+          const reviewsMap = new Map<string, ReviewData>();
+          if (!reviewsRes.error && reviewsRes.data) {
+            reviewsRes.data.forEach((r: DbReview) => {
+              reviewsMap.set(r.pin.trim().toUpperCase(), {
+                name: r.author_name,
+                content: r.content,
+                photo: r.photo_url || null,
+                createdAt: Number(r.created_at),
+                hidden: !!r.is_hidden,
+              });
+            });
+          }
+
+          return sessionsRes.data.map((db: DbSession) =>
+            dbSessionToPlayerSession(db, reviewsMap.get(db.pin.trim().toUpperCase()))
+          );
+        }
+      } catch (e) {
+        console.warn("Supabase getAllSessionsAsync failed:", e);
+      }
+    }
+  }
+
   const memos = await fetchAdminMemos();
   const store = getStore();
   Object.entries(memos).forEach(([pin, memo]) => {
@@ -491,13 +682,13 @@ export function resolvePin(input: string): string {
   const store = getStore();
   if (store.sessions[clean]) return clean;
 
-  // 숫자 또는 번호 입력 지원 (오직 숫자만 있거나 "10번"과 같은 형태일 때만 번호로 매핑)
   if (/^[0-9]+번?$/i.test(input.trim())) {
     const num = parseInt(clean.replace(/[^0-9]/g, ""), 10);
     if (!isNaN(num) && num >= 1 && num <= 100) {
       const padded = String(num).padStart(2, "0");
       const found = Object.values(store.sessions).find(
-        (s) => s.nickname.endsWith(`_${num}`) || s.nickname.endsWith(`_${padded}`)
+        (s) =>
+          s.nickname.endsWith(`_${num}`) || s.nickname.endsWith(`_${padded}`)
       );
       if (found) return found.pin;
     }
@@ -505,11 +696,44 @@ export function resolvePin(input: string): string {
   return clean;
 }
 
+export async function getSessionAsync(pin: string): Promise<PlayerSession | null> {
+  const cleanPin = resolvePin(pin).toUpperCase();
+
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      try {
+        const [sessionRes, reviewRes] = await Promise.all([
+          supabase.from("escape_sessions").select("*").eq("pin", cleanPin).maybeSingle(),
+          supabase.from("escape_reviews").select("*").eq("pin", cleanPin).maybeSingle(),
+        ]);
+
+        if (!sessionRes.error && sessionRes.data) {
+          let reviewData: ReviewData | undefined = undefined;
+          if (!reviewRes.error && reviewRes.data) {
+            reviewData = {
+              name: reviewRes.data.author_name,
+              content: reviewRes.data.content,
+              photo: reviewRes.data.photo_url || null,
+              createdAt: Number(reviewRes.data.created_at),
+              hidden: !!reviewRes.data.is_hidden,
+            };
+          }
+          return dbSessionToPlayerSession(sessionRes.data, reviewData);
+        }
+      } catch (e) {
+        console.warn("Supabase getSessionAsync failed:", e);
+      }
+    }
+  }
+
+  return getSession(cleanPin);
+}
+
 export function getSession(pin: string): PlayerSession | null {
   const store = getStore();
   const cleanPin = resolvePin(pin);
 
-  // If session doesn't exist, check defaultPins reload
   if (!store.sessions[cleanPin]) {
     const defaults = generateDefaultPins();
     if (defaults[cleanPin]) {
@@ -523,7 +747,57 @@ export function getSession(pin: string): PlayerSession | null {
   return store.sessions[cleanPin] || null;
 }
 
-export function startOrResumeSession(pin: string, customNickname?: string): PlayerSession {
+export async function startOrResumeSessionAsync(
+  pin: string,
+  customNickname?: string
+): Promise<PlayerSession> {
+  const cleanPin = resolvePin(pin).toUpperCase();
+  const now = Date.now();
+
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      const existing = await getSessionAsync(cleanPin);
+      if (!existing) {
+        throw new Error("유효하지 않은 수사 암호입니다. 암호를 다시 확인해주세요.");
+      }
+
+      const updates: Partial<DbSession> = {
+        last_active_at: now,
+      };
+
+      if (!existing.startedAt) {
+        updates.started_at = now;
+        updates.room_entered_at = now;
+        updates.status = "playing";
+      } else if (!existing.roomEnteredAt) {
+        updates.room_entered_at = now;
+      }
+
+      if (customNickname && customNickname.trim()) {
+        updates.nickname = customNickname.trim();
+      }
+
+      const { data, error } = await supabase
+        .from("escape_sessions")
+        .update(updates)
+        .eq("pin", cleanPin)
+        .select("*")
+        .single();
+
+      if (!error && data) {
+        return dbSessionToPlayerSession(data, existing.review);
+      }
+    }
+  }
+
+  return startOrResumeSession(cleanPin, customNickname);
+}
+
+export function startOrResumeSession(
+  pin: string,
+  customNickname?: string
+): PlayerSession {
   const cleanPin = resolvePin(pin);
   const session = getSession(cleanPin);
   if (!session) {
@@ -550,7 +824,77 @@ export function startOrResumeSession(pin: string, customNickname?: string): Play
   return session;
 }
 
-export function syncClientSession(clientState: Partial<PlayerSession> & { pin: string }): PlayerSession {
+export async function syncClientSessionAsync(
+  clientState: Partial<PlayerSession> & { pin: string }
+): Promise<PlayerSession> {
+  const cleanPin = resolvePin(clientState.pin).toUpperCase();
+  const now = Date.now();
+
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      const existing = await getSessionAsync(cleanPin);
+      if (existing) {
+        const updates: Partial<DbSession> = {
+          last_active_at: now,
+        };
+
+        if (clientState.currentRoom && clientState.currentRoom >= existing.currentRoom) {
+          updates.current_room = clientState.currentRoom;
+          updates.room_entered_at = clientState.roomEnteredAt || now;
+        }
+
+        if (clientState.isCleared) {
+          updates.is_cleared = true;
+          updates.cleared_at = clientState.clearedAt || now;
+          updates.status = "cleared";
+          if (clientState.totalTimeSeconds) {
+            updates.total_time_seconds = clientState.totalTimeSeconds;
+          }
+        }
+
+        if (typeof clientState.totalHintsUsed === "number") {
+          updates.total_hints_used = Math.max(
+            existing.totalHintsUsed || 0,
+            clientState.totalHintsUsed
+          );
+        }
+
+        if (clientState.startedAt && !existing.startedAt) {
+          updates.started_at = clientState.startedAt;
+        }
+
+        if (
+          clientState.unlockedHints &&
+          clientState.unlockedHints.length >= existing.unlockedHints.length
+        ) {
+          updates.unlocked_hints = clientState.unlockedHints;
+        }
+
+        if (clientState.hasReviewed) {
+          updates.has_reviewed = true;
+        }
+
+        const { data, error } = await supabase
+          .from("escape_sessions")
+          .update(updates)
+          .eq("pin", cleanPin)
+          .select("*")
+          .single();
+
+        if (!error && data) {
+          return dbSessionToPlayerSession(data, existing.review);
+        }
+      }
+    }
+  }
+
+  return syncClientSession(clientState);
+}
+
+export function syncClientSession(
+  clientState: Partial<PlayerSession> & { pin: string }
+): PlayerSession {
   const store = getStore();
   const pin = resolvePin(clientState.pin);
   let session = store.sessions[pin];
@@ -571,43 +915,132 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
     session.isCleared = true;
     session.clearedAt = clientState.clearedAt || now;
     session.status = "cleared";
-    session.totalTimeSeconds = clientState.totalTimeSeconds || session.totalTimeSeconds;
+    session.totalTimeSeconds =
+      clientState.totalTimeSeconds || session.totalTimeSeconds;
   }
   if (typeof clientState.totalHintsUsed === "number") {
-    session.totalHintsUsed = Math.max(session.totalHintsUsed || 0, clientState.totalHintsUsed);
+    session.totalHintsUsed = Math.max(
+      session.totalHintsUsed || 0,
+      clientState.totalHintsUsed
+    );
   }
   if (clientState.startedAt) {
     session.startedAt = clientState.startedAt;
   }
-  // Note: session.nickname is managed by admin memo and not overwritten by client sync
-  if (clientState.unlockedHints && clientState.unlockedHints.length >= session.unlockedHints.length) {
+  if (
+    clientState.unlockedHints &&
+    clientState.unlockedHints.length >= session.unlockedHints.length
+  ) {
     session.unlockedHints = clientState.unlockedHints;
   }
-  if (clientState.hasReviewed || clientState.review) {
+  if (clientState.hasReviewed) {
     session.hasReviewed = true;
-    if (clientState.review) {
-      // Preserve existing hidden state if set by admin or present in cachedHiddenPins
-      const isHidden = cachedHiddenPins.has(pin.toUpperCase()) || session.review?.hidden === true;
-      session.review = {
-        ...session.review,
-        ...clientState.review,
-        hidden: isHidden,
-      };
-      saveReviewToCache({
-        name: session.review.name || session.nickname || "명탐정",
-        content: session.review.content || "",
-        photo: session.review.photo || null,
-        createdAt: session.review.createdAt || Date.now(),
-        hidden: isHidden,
-        pin,
-      });
-    }
   }
 
   session.lastActiveAt = now;
   store.sessions[pin] = session;
   savePersistedSessions(store.sessions);
   return session;
+}
+
+export async function submitAnswerAsync(
+  pin: string,
+  rawAnswer: string,
+  clientCurrentRoom?: number
+): Promise<{
+  success: boolean;
+  nextRoom?: number;
+  isCleared?: boolean;
+  message?: string;
+  totalTimeSeconds?: number;
+  totalHintsUsed?: number;
+  session?: PlayerSession;
+}> {
+  const cleanPin = resolvePin(pin).toUpperCase();
+  const session = await getSessionAsync(cleanPin);
+  if (!session) {
+    return { success: false, message: "세션을 찾을 수 없습니다." };
+  }
+
+  const roomToValidate = clientCurrentRoom || session.currentRoom;
+
+  if (session.isCleared || roomToValidate > 10) {
+    return {
+      success: true,
+      isCleared: true,
+      message: "이미 모든 방을 클리어했습니다!",
+      totalTimeSeconds: session.totalTimeSeconds,
+      totalHintsUsed: session.totalHintsUsed || 0,
+      session,
+    };
+  }
+
+  const currentPuzzle = PUZZLES.find((p) => p.roomNumber === roomToValidate);
+  if (!currentPuzzle) {
+    return { success: false, message: "문제를 찾을 수 없습니다." };
+  }
+
+  const sanitizedInput = rawAnswer.replace(/\s+/g, "").toUpperCase();
+  const correctAnswer = currentPuzzle.answer.replace(/\s+/g, "").toUpperCase();
+
+  if (sanitizedInput !== correctAnswer) {
+    return { success: false, message: "오답입니다! 단서를 다시 확인해보세요." };
+  }
+
+  const now = Date.now();
+  const nextRoomNum = roomToValidate + 1;
+  const isCleared = nextRoomNum > 10;
+  const totalTime =
+    isCleared && session.startedAt
+      ? Math.max(1, Math.floor((now - session.startedAt) / 1000))
+      : session.totalTimeSeconds;
+
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      const updates: Partial<DbSession> = {
+        last_active_at: now,
+      };
+
+      if (isCleared) {
+        updates.current_room = 11;
+        updates.is_cleared = true;
+        updates.cleared_at = now;
+        updates.status = "cleared";
+        updates.total_time_seconds = totalTime;
+      } else {
+        updates.current_room = nextRoomNum;
+        updates.room_entered_at = now;
+        updates.unlocked_hints = [];
+        updates.last_hint_unlocked_at = null;
+        updates.status = "playing";
+      }
+
+      const { data, error } = await supabase
+        .from("escape_sessions")
+        .update(updates)
+        .eq("pin", cleanPin)
+        .select("*")
+        .single();
+
+      if (!error && data) {
+        const updatedSession = dbSessionToPlayerSession(data, session.review);
+        return {
+          success: true,
+          nextRoom: updatedSession.isCleared ? 10 : updatedSession.currentRoom,
+          isCleared: updatedSession.isCleared,
+          totalTimeSeconds: updatedSession.totalTimeSeconds,
+          totalHintsUsed: updatedSession.totalHintsUsed,
+          session: updatedSession,
+          message: updatedSession.isCleared
+            ? "축하합니다! 모든 방탈출을 완료했습니다!"
+            : "정답입니다! 다음 방으로 이동합니다.",
+        };
+      }
+    }
+  }
+
+  return submitAnswer(pin, rawAnswer, clientCurrentRoom);
 }
 
 export function submitAnswer(
@@ -647,7 +1080,6 @@ export function submitAnswer(
     return { success: false, message: "문제를 찾을 수 없습니다." };
   }
 
-  // Sanitize: strip spaces, uppercase
   const sanitizedInput = rawAnswer.replace(/\s+/g, "").toUpperCase();
   const correctAnswer = currentPuzzle.answer.replace(/\s+/g, "").toUpperCase();
 
@@ -655,7 +1087,6 @@ export function submitAnswer(
     return { success: false, message: "오답입니다! 단서를 다시 확인해보세요." };
   }
 
-  // Correct answer! Advance room
   const now = Date.now();
   const nextRoomNum = roomToValidate + 1;
 
@@ -665,7 +1096,10 @@ export function submitAnswer(
     session.clearedAt = now;
     session.status = "cleared";
     if (session.startedAt) {
-      session.totalTimeSeconds = Math.max(1, Math.floor((now - session.startedAt) / 1000));
+      session.totalTimeSeconds = Math.max(
+        1,
+        Math.floor((now - session.startedAt) / 1000)
+      );
     }
   } else {
     session.currentRoom = nextRoomNum;
@@ -687,8 +1121,90 @@ export function submitAnswer(
     totalTimeSeconds: session.totalTimeSeconds,
     totalHintsUsed: session.totalHintsUsed || 0,
     session,
-    message: session.isCleared ? "축하합니다! 모든 방탈출을 완료했습니다!" : "정답입니다! 다음 방으로 이동합니다.",
+    message: session.isCleared
+      ? "축하합니다! 모든 방탈출을 완료했습니다!"
+      : "정답입니다! 다음 방으로 이동합니다.",
   };
+}
+
+export async function unlockHintAsync(
+  pin: string,
+  clientCurrentRoom?: number
+): Promise<{
+  success: boolean;
+  hintIndex?: number;
+  hintText?: string;
+  unlockedHints?: number[];
+  totalHintsUsed?: number;
+  message?: string;
+  remainingCooldown?: number;
+}> {
+  const cleanPin = resolvePin(pin).toUpperCase();
+  const session = await getSessionAsync(cleanPin);
+  if (!session) {
+    return { success: false, message: "세션을 찾을 수 없습니다." };
+  }
+
+  const roomNumber = clientCurrentRoom || session.currentRoom;
+  const puzzle = PUZZLES.find((p) => p.roomNumber === roomNumber);
+  if (!puzzle) {
+    return { success: false, message: "문제를 찾을 수 없습니다." };
+  }
+
+  const now = Date.now();
+  const enteredAt = session.roomEnteredAt || session.startedAt || now;
+  const lastHintAt = session.lastHintUnlockedAt || enteredAt;
+
+  const nextHintIdx = session.unlockedHints.length;
+  if (nextHintIdx >= puzzle.hints.length) {
+    return {
+      success: false,
+      message: "이 방의 모든 힌트와 정답을 이미 열람했습니다.",
+    };
+  }
+
+  const cooldownDuration = nextHintIdx === 0 ? 120 : 60;
+  const COOLDOWN_MS = cooldownDuration * 1000;
+  const timeSinceLastEvent = now - lastHintAt;
+
+  if (timeSinceLastEvent < COOLDOWN_MS) {
+    const remainingSeconds = Math.ceil((COOLDOWN_MS - timeSinceLastEvent) / 1000);
+    return {
+      success: false,
+      message: `아직 다음 단서를 볼 수 없습니다. (${remainingSeconds}초 후 활성화)`,
+      remainingCooldown: remainingSeconds,
+    };
+  }
+
+  const newUnlocked = [...session.unlockedHints, nextHintIdx];
+  const newTotalHints = (session.totalHintsUsed || 0) + 1;
+
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      const { error } = await supabase
+        .from("escape_sessions")
+        .update({
+          unlocked_hints: newUnlocked,
+          total_hints_used: newTotalHints,
+          last_hint_unlocked_at: now,
+          last_active_at: now,
+        })
+        .eq("pin", cleanPin);
+
+      if (!error) {
+        return {
+          success: true,
+          hintIndex: nextHintIdx,
+          hintText: puzzle.hints[nextHintIdx],
+          unlockedHints: newUnlocked,
+          totalHintsUsed: newTotalHints,
+        };
+      }
+    }
+  }
+
+  return unlockHint(pin, clientCurrentRoom);
 }
 
 export function unlockHint(
@@ -721,10 +1237,12 @@ export function unlockHint(
 
   const nextHintIdx = session.unlockedHints.length;
   if (nextHintIdx >= puzzle.hints.length) {
-    return { success: false, message: "이 방의 모든 힌트와 정답을 이미 열람했습니다." };
+    return {
+      success: false,
+      message: "이 방의 모든 힌트와 정답을 이미 열람했습니다.",
+    };
   }
 
-  // First hint: 2-minute (120s) cooldown, subsequent hints: 1-minute (60s) cooldown
   const cooldownDuration = nextHintIdx === 0 ? 120 : 60;
   const COOLDOWN_MS = cooldownDuration * 1000;
   const timeSinceLastEvent = now - lastHintAt;
@@ -756,7 +1274,59 @@ export function unlockHint(
   };
 }
 
-export function passRoomAdmin(pin: string): { success: boolean; nextRoom?: number; isCleared?: boolean } {
+export async function passRoomAdminAsync(
+  pin: string
+): Promise<{ success: boolean; nextRoom?: number; isCleared?: boolean }> {
+  const cleanPin = resolvePin(pin).toUpperCase();
+  const session = await getSessionAsync(cleanPin);
+  if (!session) return { success: false };
+
+  const now = Date.now();
+  const isCleared = session.currentRoom >= 10;
+  const nextRoom = isCleared ? 11 : session.currentRoom + 1;
+
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      const updates: Partial<DbSession> = {
+        last_active_at: now,
+      };
+
+      if (isCleared) {
+        updates.is_cleared = true;
+        updates.cleared_at = now;
+        updates.status = "cleared";
+        updates.current_room = 11;
+        if (session.startedAt) {
+          updates.total_time_seconds = Math.max(
+            1,
+            Math.floor((now - session.startedAt) / 1000)
+          );
+        }
+      } else {
+        updates.current_room = nextRoom;
+        updates.room_entered_at = now;
+        updates.unlocked_hints = [];
+        updates.last_hint_unlocked_at = null;
+      }
+
+      const { error } = await supabase
+        .from("escape_sessions")
+        .update(updates)
+        .eq("pin", cleanPin);
+
+      if (!error) {
+        return { success: true, nextRoom, isCleared };
+      }
+    }
+  }
+
+  return passRoomAdmin(pin);
+}
+
+export function passRoomAdmin(
+  pin: string
+): { success: boolean; nextRoom?: number; isCleared?: boolean } {
   const cleanPin = resolvePin(pin);
   const session = getSession(cleanPin);
   if (!session) return { success: false };
@@ -767,7 +1337,10 @@ export function passRoomAdmin(pin: string): { success: boolean; nextRoom?: numbe
     session.clearedAt = now;
     session.status = "cleared";
     if (session.startedAt) {
-      session.totalTimeSeconds = Math.max(1, Math.floor((now - session.startedAt) / 1000));
+      session.totalTimeSeconds = Math.max(
+        1,
+        Math.floor((now - session.startedAt) / 1000)
+      );
     }
   } else {
     session.currentRoom += 1;
@@ -780,7 +1353,61 @@ export function passRoomAdmin(pin: string): { success: boolean; nextRoom?: numbe
   const store = getStore();
   store.sessions[cleanPin] = session;
   savePersistedSessions(store.sessions);
-  return { success: true, nextRoom: session.currentRoom, isCleared: session.isCleared };
+  return {
+    success: true,
+    nextRoom: session.currentRoom,
+    isCleared: session.isCleared,
+  };
+}
+
+export async function resetSessionAsync(pin?: string): Promise<void> {
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      if (pin) {
+        const cleanPin = resolvePin(pin).toUpperCase();
+        await supabase
+          .from("escape_sessions")
+          .update({
+            current_room: 1,
+            started_at: null,
+            room_entered_at: null,
+            unlocked_hints: [],
+            last_hint_unlocked_at: null,
+            is_cleared: false,
+            cleared_at: null,
+            total_time_seconds: 0,
+            total_hints_used: 0,
+            last_active_at: null,
+            status: "ready",
+            has_reviewed: false,
+          })
+          .eq("pin", cleanPin);
+        await supabase.from("escape_reviews").delete().eq("pin", cleanPin);
+      } else {
+        await supabase
+          .from("escape_sessions")
+          .update({
+            current_room: 1,
+            started_at: null,
+            room_entered_at: null,
+            unlocked_hints: [],
+            last_hint_unlocked_at: null,
+            is_cleared: false,
+            cleared_at: null,
+            total_time_seconds: 0,
+            total_hints_used: 0,
+            last_active_at: null,
+            status: "ready",
+            has_reviewed: false,
+          })
+          .neq("pin", "");
+        await supabase.from("escape_reviews").delete().neq("id", 0);
+      }
+    }
+  }
+
+  resetSession(pin);
 }
 
 export function resetSession(pin?: string) {
@@ -810,32 +1437,36 @@ export function resetSession(pin?: string) {
   savePersistedSessions(store.sessions);
 }
 
-export function submitReview(
+export async function submitReviewAsync(
   pin: string,
-  reviewInput: { name: string; content: string; photo?: string | null; isCleared?: boolean }
-): {
+  reviewInput: {
+    name: string;
+    content: string;
+    photo?: string | null;
+    isCleared?: boolean;
+  }
+): Promise<{
   success: boolean;
   message: string;
   review?: ReviewData;
   session?: PlayerSession;
-} {
-  const cleanPin = resolvePin(pin);
-  const session = getSession(cleanPin);
+}> {
+  const cleanPin = resolvePin(pin).toUpperCase();
+  const session = await getSessionAsync(cleanPin);
   if (!session) {
     return { success: false, message: "세션을 찾을 수 없습니다." };
   }
 
-  // 중복 작성/수정 방지: 이미 작성한 경우 수정 불가
   if (session.hasReviewed) {
     return {
       success: false,
-      message: "이미 후기를 등록하셨습니다. 후기는 1회만 등록 가능하며 수정할 수 없습니다.",
+      message:
+        "이미 후기를 등록하셨습니다. 후기는 1회만 등록 가능하며 수정할 수 없습니다.",
       review: session.review,
       session,
     };
   }
 
-  // 클라이언트 클리어 플래그 동기화
   if (reviewInput.isCleared) {
     session.isCleared = true;
     if (session.currentRoom <= 10) {
@@ -843,7 +1474,6 @@ export function submitReview(
     }
   }
 
-  // 클리어 여부 확인: 사건 해결자만 후기 등록 가능
   if (!session.isCleared && session.currentRoom <= 10) {
     return {
       success: false,
@@ -858,7 +1488,123 @@ export function submitReview(
     return { success: false, message: "작성자 이름을 입력해주세요." };
   }
   if (!content || content.length < 2) {
-    return { success: false, message: "후기 내용을 최소 2자 이상 작성해주세요." };
+    return {
+      success: false,
+      message: "후기 내용을 최소 2자 이상 작성해주세요.",
+    };
+  }
+
+  const now = Date.now();
+  const review: ReviewData = {
+    name,
+    content,
+    photo: reviewInput.photo || null,
+    createdAt: now,
+  };
+
+  if (isSupabaseConfigured()) {
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      try {
+        const { error: reviewErr } = await supabase
+          .from("escape_reviews")
+          .upsert(
+            {
+              pin: cleanPin,
+              author_name: name,
+              content,
+              photo_url: reviewInput.photo || null,
+              is_hidden: false,
+              created_at: now,
+            },
+            { onConflict: "pin" }
+          );
+
+        if (!reviewErr) {
+          await supabase
+            .from("escape_sessions")
+            .update({
+              has_reviewed: true,
+              is_cleared: true,
+              current_room: Math.max(11, session.currentRoom),
+              last_active_at: now,
+            })
+            .eq("pin", cleanPin);
+
+          session.hasReviewed = true;
+          session.review = review;
+          return {
+            success: true,
+            message: "소중한 후기가 성공적으로 등록되었습니다!",
+            review,
+            session,
+          };
+        }
+        console.error("Supabase review submit failed:", reviewErr);
+      } catch (e) {
+        console.error("Supabase review submit exception:", e);
+      }
+    }
+  }
+
+  return submitReview(pin, reviewInput);
+}
+
+export function submitReview(
+  pin: string,
+  reviewInput: {
+    name: string;
+    content: string;
+    photo?: string | null;
+    isCleared?: boolean;
+  }
+): {
+  success: boolean;
+  message: string;
+  review?: ReviewData;
+  session?: PlayerSession;
+} {
+  const cleanPin = resolvePin(pin);
+  const session = getSession(cleanPin);
+  if (!session) {
+    return { success: false, message: "세션을 찾을 수 없습니다." };
+  }
+
+  if (session.hasReviewed) {
+    return {
+      success: false,
+      message:
+        "이미 후기를 등록하셨습니다. 후기는 1회만 등록 가능하며 수정할 수 없습니다.",
+      review: session.review,
+      session,
+    };
+  }
+
+  if (reviewInput.isCleared) {
+    session.isCleared = true;
+    if (session.currentRoom <= 10) {
+      session.currentRoom = 11;
+    }
+  }
+
+  if (!session.isCleared && session.currentRoom <= 10) {
+    return {
+      success: false,
+      message: "사건을 모두 해결(클리어)한 탐정만 후기를 남길 수 있습니다.",
+    };
+  }
+
+  const name = reviewInput.name?.trim();
+  const content = reviewInput.content?.trim();
+
+  if (!name) {
+    return { success: false, message: "작성자 이름을 입력해주세요." };
+  }
+  if (!content || content.length < 2) {
+    return {
+      success: false,
+      message: "후기 내용을 최소 2자 이상 작성해주세요.",
+    };
   }
 
   const now = Date.now();
