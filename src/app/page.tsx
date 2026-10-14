@@ -29,7 +29,8 @@ export default function HomePage() {
       const urlParams = new URLSearchParams(window.location.search);
       const urlCode = urlParams.get("code") || urlParams.get("pin");
       if (urlCode && urlCode.trim().length === 6) {
-        handleLogin(urlCode.trim().toUpperCase());
+        setPasswordInput(urlCode.trim().toUpperCase());
+        setIsModalOpen(true);
       }
     } catch (e) {
       console.warn("Storage check failed:", e);
@@ -41,10 +42,11 @@ export default function HomePage() {
     setErrorMsg(null);
     try {
       const cleanCode = code.trim().toUpperCase();
+      const cleanName = nickname?.trim();
       const res = await fetch("/api/auth/pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin: cleanCode, nickname }),
+        body: JSON.stringify({ pin: cleanCode, nickname: cleanName }),
       });
       const data = await res.json();
 
@@ -87,7 +89,12 @@ export default function HomePage() {
       setErrorMsg("수사 암호를 입력해주세요.");
       return;
     }
-    handleLogin(passwordInput, nicknameInput);
+    const cleanName = nicknameInput.trim();
+    if (!cleanName || cleanName.length < 2) {
+      setErrorMsg("이름을 2글자 이상 필수로 입력해주세요.");
+      return;
+    }
+    handleLogin(passwordInput, cleanName);
   };
 
   return (
@@ -198,8 +205,9 @@ export default function HomePage() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-amber-400 mb-1.5">
-                  수사 암호 입력
+                <label className="block text-xs font-bold text-amber-400 mb-1.5 flex items-center justify-between">
+                  <span>수사 암호 입력</span>
+                  <span className="text-[10px] text-amber-500 font-semibold">(필수 6자리)</span>
                 </label>
                 <input
                   type="text"
@@ -211,26 +219,39 @@ export default function HomePage() {
                   autoCapitalize="characters"
                   autoCorrect="off"
                   spellCheck="false"
+                  required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-stone-300 mb-1.5">
-                  조수 닉네임 (선택)
+                <label className="block text-xs font-bold text-amber-400 mb-1.5 flex items-center justify-between">
+                  <span>참가자 이름</span>
+                  <span className="text-[10px] text-amber-500 font-semibold">(필수, 2글자 이상)</span>
                 </label>
                 <input
                   type="text"
+                  minLength={2}
+                  maxLength={15}
                   value={nicknameInput}
                   onChange={(e) => setNicknameInput(e.target.value)}
-                  placeholder="미입력 시 기본 번호로 설정"
-                  className="w-full px-4 py-2.5 rounded-xl bg-stone-900 border border-stone-700 text-stone-100 text-sm focus:outline-none focus:border-amber-500"
+                  placeholder="이름을 입력하세요 (2글자 이상)"
+                  className="w-full px-4 py-3 rounded-xl bg-stone-900 border-2 border-stone-700 text-stone-100 text-sm focus:outline-none focus:border-amber-500"
+                  required
                 />
+              </div>
+
+              {/* 힌트 신중 사용 당부 멘트 */}
+              <div className="py-2.5 px-3 rounded-xl bg-amber-950/60 border border-amber-600/40 text-amber-300 text-xs text-center flex items-center justify-center gap-1.5 shadow-sm">
+                <span className="text-sm">💡</span>
+                <span className="font-semibold leading-relaxed">
+                  힌트는 적게 사용하는 게 좋을 거야! 쓰기 전에 한 번 더 고민해봐.
+                </span>
               </div>
 
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-3.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-bold text-base transition shadow-lg mt-2 disabled:opacity-50"
+                className="w-full py-3.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-stone-950 font-bold text-base transition shadow-lg mt-1 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isLoading ? "암호 확인 중..." : "수사 현장 입장하기"}
               </button>

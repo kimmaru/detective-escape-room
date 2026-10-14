@@ -9,8 +9,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "PIN 번호를 입력해주세요." }, { status: 400 });
     }
 
+    const cleanName = typeof nickname === "string" ? nickname.trim() : "";
+    if (!cleanName || cleanName.length < 2) {
+      return NextResponse.json({ error: "이름을 2글자 이상 입력해주세요." }, { status: 400 });
+    }
+
     const cleanPin = pin.trim().toUpperCase();
-    const session = startOrResumeSession(cleanPin, nickname);
+    const session = startOrResumeSession(cleanPin, cleanName);
 
     const res = NextResponse.json({
       success: true,
