@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
@@ -17,8 +17,21 @@ import {
   Trash2,
   Loader2,
   Check,
+  BookOpen,
+  ChevronRight,
+  RefreshCw,
+  Maximize2,
+  UserCheck,
 } from "lucide-react";
 import confetti from "canvas-confetti";
+
+interface ReviewItem {
+  pin: string;
+  name: string;
+  content: string;
+  photo?: string | null;
+  createdAt: number;
+}
 
 export default function ClearPage() {
   const router = useRouter();
@@ -26,7 +39,7 @@ export default function ClearPage() {
   const [isRewardOpen, setIsRewardOpen] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
-  // Review state
+  // Review submission state
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [hasReviewed, setHasReviewed] = useState(false);
   const [reviewerName, setReviewerName] = useState("");
@@ -35,7 +48,42 @@ export default function ClearPage() {
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
+  // Review Board state (게시판 관련)
+  const [isBoardOpen, setIsBoardOpen] = useState(false);
+  const [boardReviews, setBoardReviews] = useState<ReviewItem[]>([]);
+  const [isLoadingBoard, setIsLoadingBoard] = useState(false);
+  const [boardError, setBoardError] = useState<string | null>(null);
+  const [lightboxPhoto, setLightboxPhoto] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 게시판 후기 목록 불러오기 (클리어한 사용자 PIN 기반)
+  const loadBoardReviews = useCallback(async (pinToUse?: string) => {
+    const activePin = pinToUse || session?.pin;
+    if (!activePin) return;
+
+    setIsLoadingBoard(true);
+    setBoardError(null);
+    try {
+      const res = await fetch(`/api/review?pin=${encodeURIComponent(activePin)}&t=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setBoardError(data.message || "후기 게시판을 불러오지 못했습니다.");
+        return;
+      }
+      setBoardReviews(data.reviews || []);
+      if (data.hasReviewed) {
+        setHasReviewed(true);
+      }
+    } catch (e) {
+      console.error("Board fetch error:", e);
+      setBoardError("후기 목록을 불러오는 중 네트워크 오류가 발생했습니다.");
+    } finally {
+      setIsLoadingBoard(false);
+    }
+  }, [session?.pin]);
 
   useEffect(() => {
     let activePin = "";
@@ -91,6 +139,9 @@ export default function ClearPage() {
           }
         })
         .catch(() => {});
+
+      // 클리어한 사람이므로 백그라운드에서 후기 게시판 사전 로드
+      loadBoardReviews(activePin);
     }
 
     // Trigger celebratory confetti cannon
@@ -118,7 +169,7 @@ export default function ClearPage() {
       }
     };
     frame();
-  }, [router]);
+  }, [router, loadBoardReviews]);
 
   const handleOpenReward = () => {
     setIsRewardOpen(true);
@@ -142,7 +193,7 @@ export default function ClearPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // 모바일 고화질 이미지 브라우저 단에서 800px 크기로 압축 및 리사이징 (구글 드라이브 및 스프레드시트 최적화)
+    // 모바일 고화질 이미지 브라우저 단에서 800px 크기로 압축 및 리사이징
     const reader = new FileReader();
     reader.onload = (loadEvent) => {
       const img = new window.Image();
@@ -179,6 +230,13 @@ export default function ClearPage() {
 
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (hasReviewed) {
+      alert("이미 후기를 등록하셨습니다. 후기는 1회만 등록 가능합니다.");
+      setIsReviewModalOpen(false);
+      return;
+    }
+
     if (!reviewerName.trim()) {
       setErrorMessage("이름을 입력해주세요.");
       return;
@@ -198,8 +256,9 @@ export default function ClearPage() {
       photo: photoData,
     };
 
-    // 1) 브라우저에서 직접 구글 웹앱 URL로도 2중 백업 전송 (Vercel 타임아웃 완벽 방어)
-    const googleSheetUrl = "https://script.google.com/macros/s/AKfycbxKY3sFsMUaUN2fuYFXLcSDrzlc7SC7PcBxZtHBWa0YRkoUg-bCJVTrCYouFnuLMqu9-w/exec";
+    // 1) 구글 웹앱 URL 백업 전송
+    const googleSheetUrl =
+      "https://script.google.com/macros/s/AKfycbxKY3sFsMUaUN2fuYFXLcSDrzlc7SC7PcBxZtHBWa0YRkoUg-bCJVTrCYouFnuLMqu9-w/exec";
     try {
       fetch(googleSheetUrl, {
         method: "POST",
@@ -209,7 +268,7 @@ export default function ClearPage() {
       }).catch(() => {});
     } catch {}
 
-    // 2) 우리 서버 API 호출
+    // 2) 서버 API 호출
     try {
       const res = await fetch("/api/review", {
         method: "POST",
@@ -236,6 +295,9 @@ export default function ClearPage() {
       } catch {}
 
       setIsReviewModalOpen(false);
+      // 게시판 새로고침
+      loadBoardReviews(session?.pin);
+
       try {
         confetti({
           particleCount: 70,
@@ -244,12 +306,13 @@ export default function ClearPage() {
           colors: ["#10b981", "#f59e0b", "#3b82f6", "#ffffff"],
         });
       } catch {}
-      alert("소중한 후기와 사진이 스프레드시트에 성공적으로 기록되었습니다! 참여해주셔서 진심으로 감사드립니다. 🎉");
+
+      alert("소중한 후기와 사진이 성공적으로 등록되었습니다! 후기 게시판에 반영되었습니다. 🎉");
     } catch (err) {
       console.error("Submit review error:", err);
-      // 서버 에러가 나더라도 구글 직접 전송이 성공했을 수 있으므로 등록 상태로 전환
       setHasReviewed(true);
       setIsReviewModalOpen(false);
+      loadBoardReviews(session?.pin);
       alert("후기가 안전하게 전송되었습니다! 참여해주셔서 감사합니다.");
     } finally {
       setIsSubmittingReview(false);
@@ -277,6 +340,17 @@ export default function ClearPage() {
     return `${secs}초`;
   };
 
+  const formatReviewDate = (timestamp: number) => {
+    if (!timestamp) return "";
+    const date = new Date(timestamp);
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    const hh = String(date.getHours()).padStart(2, "0");
+    const min = String(date.getMinutes()).padStart(2, "0");
+    return `${yyyy}.${mm}.${dd} ${hh}:${min}`;
+  };
+
   if (isAuthChecking) {
     return (
       <div className="flex-1 min-h-[100dvh] flex flex-col items-center justify-center p-6 text-stone-300 bg-[#161311]">
@@ -287,7 +361,7 @@ export default function ClearPage() {
   }
 
   return (
-    <div className="relative flex flex-col flex-1 min-h-[100dvh] max-w-md mx-auto w-full bg-[#161311] text-stone-100 select-none overflow-hidden shadow-2xl">
+    <div className="relative flex flex-col flex-1 min-h-[100dvh] max-w-md mx-auto w-full bg-[#161311] text-stone-100 select-none overflow-x-hidden shadow-2xl">
       {/* Background watermark */}
       <div className="absolute inset-0 z-0">
         <Image
@@ -300,7 +374,7 @@ export default function ClearPage() {
         <div className="absolute inset-0 bg-gradient-to-t from-[#141110] via-[#141110]/80 to-[#141110]/60" />
       </div>
 
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-6 text-center max-w-sm mx-auto w-full">
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-6 text-center max-w-sm mx-auto w-full pb-10">
         {/* Interactive Gift Box Badge (선물상자 아이콘 클릭 시 전체화면 Clear 이미지 등장) */}
         <div className="relative mb-6">
           <button
@@ -369,12 +443,15 @@ export default function ClearPage() {
         </div>
 
         {/* Action Buttons */}
-        <div className="w-full space-y-3.5">
-          {/* 후기 남기기 유도 섹션 */}
+        <div className="w-full space-y-3">
+          {/* 후기 남기기 섹션 (1회만 작성 가능, 수정 불가) */}
           <div className="relative w-full flex flex-col items-center">
             {!hasReviewed && (
               /* 통통 튀는 인터랙티브 유도 말풍선 배지 */
-              <div className="relative mb-2 animate-bounce z-10 cursor-pointer" onClick={() => setIsReviewModalOpen(true)}>
+              <div
+                className="relative mb-2 animate-bounce z-10 cursor-pointer"
+                onClick={() => setIsReviewModalOpen(true)}
+              >
                 <div className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 text-stone-950 font-black text-[12px] shadow-[0_4px_15px_rgba(245,158,11,0.5)] border border-amber-200">
                   <Sparkles className="w-3.5 h-3.5 animate-spin" />
                   <span>📸 10초 만에 인증샷 & 수사 후기 남기기!</span>
@@ -384,7 +461,7 @@ export default function ClearPage() {
               </div>
             )}
 
-            {/* 후기 남기기 버튼 (매력적인 네온 글로우 & 펄스 효과) */}
+            {/* 후기 작성 버튼 */}
             <div className="relative w-full group">
               {!hasReviewed && (
                 <div className="absolute -inset-1 rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-400 to-orange-500 opacity-80 blur-md group-hover:opacity-100 transition duration-300 animate-pulse" />
@@ -394,21 +471,23 @@ export default function ClearPage() {
                 type="button"
                 onClick={() => {
                   if (hasReviewed) {
-                    alert("이미 소중한 후기를 등록해주셨습니다! 감사합니다 ❤️");
+                    alert("소중한 수사 후기를 이미 등록해주셨습니다! (1인 1회 한정)");
                     return;
                   }
                   setIsReviewModalOpen(true);
                 }}
                 className={`relative w-full py-4 px-5 rounded-2xl font-black text-base shadow-2xl flex items-center justify-center gap-2.5 transition active:scale-95 border ${
                   hasReviewed
-                    ? "bg-stone-800/90 text-emerald-400 border-emerald-500/40 cursor-default"
-                    : "bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 hover:from-amber-300 hover:to-orange-400 text-stone-950 border-amber-200 shadow-[0_0_30px_rgba(245,158,11,0.6)]"
+                    ? "bg-[#1c221e] text-emerald-400 border-emerald-500/40 cursor-default"
+                    : "bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 hover:from-amber-300 hover:to-orange-400 text-stone-950 border-amber-200 shadow-[0_0_30px_rgba(245,158,11,0.6)] cursor-pointer"
                 }`}
               >
                 {hasReviewed ? (
                   <>
                     <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                    <span>수사 후기 작성 완료 ✓</span>
+                    <span className="tracking-tight text-emerald-300 font-bold text-sm">
+                      수사 후기 등록 완료 ✓ (수정 불가)
+                    </span>
                   </>
                 ) : (
                   <>
@@ -424,24 +503,51 @@ export default function ClearPage() {
 
             {!hasReviewed ? (
               <p className="mt-2 text-[11px] text-amber-300/90 font-semibold flex items-center gap-1 drop-shadow">
-                <span>🏆 작성된 후기는 실시간 탐정 일지에 영구 보존됩니다!</span>
+                <span>🏆 작성된 후기는 클리어 전용 탐정 일지에 영구 보존됩니다! (1회 제한)</span>
               </p>
             ) : (
-              <button
-                type="button"
-                onClick={() => setIsReviewModalOpen(true)}
-                className="mt-2 text-xs text-amber-400 hover:text-amber-300 underline font-semibold flex items-center gap-1 transition"
-              >
-                <span>후기 다시 작성 / 수정하기 ✏️</span>
-              </button>
+              <p className="mt-2 text-[11px] text-stone-400 font-medium flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>1회 등록이 완료되었습니다. 감사합니다!</span>
+              </p>
             )}
+          </div>
+
+          {/* 클리어 전용: 명탐정 수사 후기 게시판 열기 버튼 */}
+          <div className="relative w-full pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setIsBoardOpen(true);
+                loadBoardReviews();
+              }}
+              className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-stone-900 via-[#221c17] to-stone-900 hover:from-amber-950/70 hover:to-stone-850 text-amber-200 font-black text-sm shadow-xl flex items-center justify-center gap-2.5 transition active:scale-95 border border-amber-500/40 hover:border-amber-400 cursor-pointer group"
+            >
+              <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 group-hover:scale-110 transition">
+                <BookOpen className="w-4 h-4" />
+              </div>
+              <div className="text-left flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-amber-300 font-black text-[14px]">
+                    명탐정 수사 후기 게시판
+                  </span>
+                  <span className="px-2 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[11px] font-mono font-bold border border-amber-500/30">
+                    {boardReviews.length}
+                  </span>
+                </div>
+                <p className="text-[10px] text-stone-400 font-normal">
+                  사건을 해결한 탐정들만의 비밀 후기 모음집
+                </p>
+              </div>
+              <ChevronRight className="w-4 h-4 text-amber-400 group-hover:translate-x-1 transition" />
+            </button>
           </div>
 
           {/* 메인 화면으로 버튼 */}
           <button
             type="button"
             onClick={() => router.push("/")}
-            className="w-full py-3.5 rounded-2xl bg-stone-800/90 hover:bg-stone-750 text-stone-300 font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition active:scale-95 border border-stone-700/80"
+            className="w-full py-3.5 rounded-2xl bg-stone-800/90 hover:bg-stone-750 text-stone-300 font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition active:scale-95 border border-stone-700/80 cursor-pointer"
           >
             <Home className="w-4 h-4 text-stone-400" />
             <span>메인 화면으로</span>
@@ -449,8 +555,8 @@ export default function ClearPage() {
         </div>
       </div>
 
-      {/* 후기 남기기 모달 (Review Modal) */}
-      {isReviewModalOpen && (
+      {/* 후기 남기기 모달 (1회만 작성 가능) */}
+      {isReviewModalOpen && !hasReviewed && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
           <div className="relative max-w-md w-full bg-[#1e1814] border-2 border-amber-600/60 rounded-3xl p-6 text-stone-100 shadow-[0_0_50px_rgba(0,0,0,0.8)] max-h-[92vh] overflow-y-auto">
             {/* Header */}
@@ -463,8 +569,8 @@ export default function ClearPage() {
                   <h2 className="text-lg font-black text-stone-100 tracking-tight">
                     사건 해결 후기 남기기
                   </h2>
-                  <p className="text-[11px] text-stone-400 font-medium">
-                    1인당 1회만 등록할 수 있습니다.
+                  <p className="text-[11px] text-amber-400/90 font-medium">
+                    ⚠️ 1인당 1회만 등록 가능하며, 등록 후 수정할 수 없습니다.
                   </p>
                 </div>
               </div>
@@ -514,7 +620,6 @@ export default function ClearPage() {
                   )}
                 </div>
 
-                {/* 숨겨진 파일 인풋: capture="user"로 모바일 기기 전면 카메라(셀카) 즉시 구동 */}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -569,7 +674,7 @@ export default function ClearPage() {
                 <textarea
                   value={reviewText}
                   onChange={(e) => setReviewText(e.target.value)}
-                  placeholder="방탈출은 어떠셨나요? 재미있었던 순간이나 아쉬웠던 점을 자유롭게 남겨주세요! (예: 7번 방 암호 풀 때 소름 돋았어요!)"
+                  placeholder="방탈출은 어떠셨나요? 재미있었던 순간이나 감상을 자유롭게 남겨주세요! (등록 후에는 수정할 수 없습니다)"
                   rows={4}
                   required
                   maxLength={1000}
@@ -610,12 +715,238 @@ export default function ClearPage() {
                   ) : (
                     <>
                       <Check className="w-4 h-4 stroke-[3]" />
-                      <span>후기 등록 완료</span>
+                      <span>후기 등록 완료 (1회 한정)</span>
                     </>
                   )}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 명탐정 수사 후기 게시판 모달 (클리어한 사람만 열람 가능) */}
+      {isBoardOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-md animate-fadeIn">
+          <div className="relative max-w-lg w-full h-[90vh] bg-[#1a1512] border-2 border-amber-600/70 rounded-3xl p-5 sm:p-6 text-stone-100 shadow-[0_0_60px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3.5 border-b border-stone-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-inner">
+                  <BookOpen className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base sm:text-lg font-black text-stone-100 tracking-tight">
+                      명탐정 수사 후기 게시판
+                    </h2>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-500/40 text-[10px] font-black flex items-center gap-1">
+                      <UserCheck className="w-3 h-3" />
+                      <span>클리어 인증됨</span>
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-400/80 font-medium">
+                    사건을 해결한 명탐정들만 입장할 수 있는 비밀 게시판입니다.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => loadBoardReviews()}
+                  disabled={isLoadingBoard}
+                  title="새로고침"
+                  className="p-2 rounded-xl bg-stone-900 text-stone-300 hover:text-amber-300 hover:bg-stone-800 border border-stone-700 transition"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoadingBoard ? "animate-spin text-amber-400" : ""}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsBoardOpen(false)}
+                  className="p-2 rounded-xl bg-stone-900 text-stone-400 hover:text-white hover:bg-stone-800 border border-stone-700 transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Sub Bar (통계 & 내 후기 상태) */}
+            <div className="py-2.5 px-3 my-3 rounded-xl bg-stone-900/90 border border-stone-800 flex items-center justify-between shrink-0 text-xs">
+              <span className="text-stone-300 font-semibold">
+                총 <strong className="text-amber-400 font-mono font-bold text-sm">{boardReviews.length}</strong>개의 수사 일지
+              </span>
+              {hasReviewed ? (
+                <span className="text-emerald-400 text-[11px] font-bold flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>내 후기 등록 완료</span>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBoardOpen(false);
+                    setIsReviewModalOpen(true);
+                  }}
+                  className="text-amber-300 hover:text-amber-200 text-[11px] font-bold underline flex items-center gap-1"
+                >
+                  <span>나도 후기 남기기 ✍️</span>
+                </button>
+              )}
+            </div>
+
+            {/* Error Message */}
+            {boardError && (
+              <div className="p-3 mb-3 rounded-xl bg-red-950/70 border border-red-800 text-xs text-red-300 font-medium shrink-0">
+                {boardError}
+              </div>
+            )}
+
+            {/* Review Cards Feed */}
+            <div className="flex-1 overflow-y-auto space-y-3.5 pr-1 text-left custom-scrollbar">
+              {isLoadingBoard && boardReviews.length === 0 ? (
+                <div className="h-48 flex flex-col items-center justify-center gap-2 text-stone-400">
+                  <Loader2 className="w-6 h-6 animate-spin text-amber-500" />
+                  <p className="text-xs">명탐정 수사 일지 로딩 중...</p>
+                </div>
+              ) : boardReviews.length === 0 ? (
+                <div className="h-60 flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-stone-900/40 border border-stone-800/80">
+                  <div className="p-3 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 mb-3">
+                    <BookOpen className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-sm font-bold text-stone-200 mb-1">
+                    아직 등록된 후기가 없습니다
+                  </h3>
+                  <p className="text-xs text-stone-400 mb-4 leading-relaxed">
+                    첫 번째로 사건 해결 후기를 남겨 명탐정 일지의 첫 페이지를 장식해보세요!
+                  </p>
+                  {!hasReviewed && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsBoardOpen(false);
+                        setIsReviewModalOpen(true);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-black shadow transition active:scale-95"
+                    >
+                      첫 번째 후기 작성하기 ✍️
+                    </button>
+                  )}
+                </div>
+              ) : (
+                boardReviews.map((item, idx) => {
+                  const isMyReview = item.pin === session?.pin;
+                  return (
+                    <div
+                      key={item.pin || idx}
+                      className={`relative rounded-2xl p-4 transition ${
+                        isMyReview
+                          ? "bg-gradient-to-b from-[#292019] to-[#1e1713] border-2 border-amber-500/80 shadow-[0_4px_20px_rgba(245,158,11,0.15)]"
+                          : "bg-[#201915]/90 border border-stone-800/90 hover:border-amber-700/50"
+                      }`}
+                    >
+                      {/* Top info */}
+                      <div className="flex items-start justify-between gap-2 mb-2.5">
+                        <div className="flex items-center gap-2">
+                          <div
+                            className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs ${
+                              isMyReview
+                                ? "bg-amber-400 text-stone-950 shadow"
+                                : "bg-stone-800 text-amber-300 border border-stone-700"
+                            }`}
+                          >
+                            {item.name ? item.name.charAt(0).toUpperCase() : "탐"}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-bold text-stone-100">
+                                {item.name}
+                              </span>
+                              {isMyReview && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black">
+                                  ⭐ 내 후기
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] font-mono text-stone-500">
+                              {formatReviewDate(item.createdAt)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-stone-900/90 text-amber-400/80 border border-amber-700/30">
+                          CLEARED
+                        </span>
+                      </div>
+
+                      {/* Photo Thumbnail if present */}
+                      {item.photo && (
+                        <div className="relative mb-3 rounded-xl overflow-hidden border border-amber-500/30 bg-stone-950 group">
+                          <img
+                            src={item.photo}
+                            alt={`${item.name}님의 인증 사진`}
+                            className="w-full max-h-56 object-cover cursor-pointer hover:scale-[1.02] transition duration-300"
+                            onClick={() => setLightboxPhoto(item.photo || null)}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setLightboxPhoto(item.photo || null)}
+                            className="absolute bottom-2 right-2 px-2.5 py-1 rounded-lg bg-black/70 hover:bg-black/90 text-[11px] font-semibold text-stone-200 backdrop-blur-sm border border-stone-700 flex items-center gap-1 transition"
+                          >
+                            <Maximize2 className="w-3 h-3 text-amber-400" />
+                            <span>사진 크게보기</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Review Text */}
+                      <p className="text-xs sm:text-sm text-stone-200 leading-relaxed whitespace-pre-wrap font-medium">
+                        {item.content}
+                      </p>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Bottom Close */}
+            <div className="pt-3 border-t border-stone-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsBoardOpen(false)}
+                className="w-full py-3 rounded-xl bg-stone-800 hover:bg-stone-750 text-stone-300 text-xs font-bold transition active:scale-95 cursor-pointer"
+              >
+                게시판 닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 사진 전체화면 확대 라이트박스 */}
+      {lightboxPhoto && (
+        <div
+          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md animate-fadeIn"
+          onClick={() => setLightboxPhoto(null)}
+        >
+          <div
+            className="relative max-w-lg w-full max-h-[90vh] flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setLightboxPhoto(null)}
+              className="absolute -top-11 right-0 p-2 rounded-full bg-stone-900 text-stone-300 hover:text-white border border-stone-700 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="relative w-full rounded-2xl overflow-hidden border-2 border-amber-500/60 shadow-2xl bg-stone-950 flex items-center justify-center">
+              <img
+                src={lightboxPhoto}
+                alt="확대된 인증 사진"
+                className="w-full max-h-[80vh] object-contain"
+              />
+            </div>
           </div>
         </div>
       )}

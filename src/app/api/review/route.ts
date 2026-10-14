@@ -24,6 +24,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // 클리어 여부 확인
+    if (!session.isCleared && session.currentRoom <= 10) {
+      return NextResponse.json(
+        { success: false, message: "사건을 모두 해결(클리어)한 탐정만 후기를 등록할 수 있습니다." },
+        { status: 403 }
+      );
+    }
+
+    // 중복 작성/수정 방지 (1회 제한)
+    if (session.hasReviewed) {
+      return NextResponse.json(
+        { success: false, message: "이미 후기를 등록하셨습니다. 후기는 1인당 1회만 등록 가능하며 수정할 수 없습니다." },
+        { status: 400 }
+      );
+    }
+
     if (!name || !name.trim()) {
       return NextResponse.json(
         { success: false, message: "참가자 이름을 입력해주세요." },
@@ -97,22 +113,48 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const pin = searchParams.get("pin");
 
-    if (pin) {
-      const session = getSession(pin);
-      return NextResponse.json({
-        hasReviewed: !!session?.hasReviewed,
-        review: session?.review || null,
-      });
+    if (!pin) {
+      return NextResponse.json(
+        { success: false, message: "수사 암호(PIN)가 필요합니다." },
+        { status: 401 }
+      );
+    }
+
+    const session = getSession(pin);
+    if (!session) {
+      return NextResponse.json(
+        { success: false, message: "유효하지 않은 수사 암호입니다." },
+        { status: 404 }
+      );
+    }
+
+    // 클리어한 사람만 후기 게시판을 볼 수 있도록 통제
+    const isCleared = !!session.isCleared || session.currentRoom > 10;
+    if (!isCleared) {
+      return NextResponse.json(
+        {
+          success: false,
+          isCleared: false,
+          message: "사건을 모두 해결(클리어)한 명탐정만 후기 게시판을 열람할 수 있습니다.",
+        },
+        { status: 403 }
+      );
     }
 
     const reviews = getAllReviews();
     return NextResponse.json({
+      success: true,
+      isCleared: true,
+      hasReviewed: !!session.hasReviewed,
+      myPin: session.pin,
+      myReview: session.review || null,
       total: reviews.length,
       reviews,
     });
   } catch (error) {
+    console.error("Review fetch error:", error);
     return NextResponse.json(
-      { error: "Failed to fetch reviews" },
+      { success: false, message: "후기를 불러오는 중 오류가 발생했습니다." },
       { status: 500 }
     );
   }

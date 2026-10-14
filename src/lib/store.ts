@@ -7,27 +7,51 @@ const CACHE_FILE = path.join("/tmp", "escaperoom_sessions.json");
 const REVIEWS_FILE = path.join("/tmp", "escaperoom_reviews.json");
 
 export function getAllReviews(): Array<ReviewData & { pin: string }> {
+  const reviewMap = new Map<string, ReviewData & { pin: string }>();
+
+  // 1. Read from persistent file cache
   try {
     if (fs.existsSync(REVIEWS_FILE)) {
       const data = fs.readFileSync(REVIEWS_FILE, "utf-8");
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((r) => {
+          if (r && r.pin) {
+            reviewMap.set(r.pin, r);
+          }
+        });
+      }
     }
   } catch (e) {
     console.error("Failed to load reviews from /tmp:", e);
   }
-  return [];
+
+  // 2. Merge reviews from active sessions
+  if (globalThis.__escapeStore?.sessions) {
+    Object.values(globalThis.__escapeStore.sessions).forEach((s) => {
+      if (s.hasReviewed && s.review && !reviewMap.has(s.pin)) {
+        reviewMap.set(s.pin, { ...s.review, pin: s.pin });
+      }
+    });
+  }
+
+  // Sort by newest first
+  return Array.from(reviewMap.values()).sort(
+    (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+  );
 }
 
 function saveReviewToCache(reviewWithPin: ReviewData & { pin: string }) {
   try {
     const list = getAllReviews();
     const filtered = list.filter((r) => r.pin !== reviewWithPin.pin);
-    filtered.push(reviewWithPin);
+    filtered.unshift(reviewWithPin);
     fs.writeFileSync(REVIEWS_FILE, JSON.stringify(filtered, null, 2));
   } catch (e) {
     console.error("Failed to save review to /tmp:", e);
   }
 }
+
 
 interface GlobalStore {
   sessions: Record<string, PlayerSession>;
@@ -174,7 +198,7 @@ export function syncClientSession(clientState: Partial<PlayerSession> & { pin: s
   }
   if (clientState.hasReviewed) {
     session.hasReviewed = true;
-    if (clientState.review) {
+    if (clientState.review && !session.review) {
       session.review = clientState.review;
     }
   }
@@ -398,6 +422,24 @@ export function submitReview(
   const session = getSession(cleanPin);
   if (!session) {
     return { success: false, message: "세션을 찾을 수 없습니다." };
+  }
+
+  // 중복 작성/수정 방지: 이미 작성한 경우 수정 불가
+  if (session.hasReviewed) {
+    return {
+      success: false,
+      message: "이미 후기를 등록하셨습니다. 후기는 1회만 등록 가능하며 수정할 수 없습니다.",
+      review: session.review,
+      session,
+    };
+  }
+
+  // 클리어 여부 확인: 사건 해결자만 후기 등록 가능
+  if (!session.isCleared && session.currentRoom <= 10) {
+    return {
+      success: false,
+      message: "사건을 모두 해결(클리어)한 탐정만 후기를 남길 수 있습니다.",
+    };
   }
 
   const name = reviewInput.name?.trim();
