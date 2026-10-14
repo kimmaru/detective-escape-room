@@ -458,14 +458,14 @@ sequenceDiagram
    - `Canvas-confetti`: 엔딩 클리어 시 축하 폭죽 효과
 
 ### 6.2 백엔드 및 실시간 통신 규격
-1. **서버 런타임**: Node.js (TypeScript) + Fastify/Express
-2. **실시간 통신 프로토콜**:
-   - **WebSocket (Socket.io)** 또는 **Server-Sent Events (SSE)**
-   - 플레이어는 상태 변경 시마다 서버에 REST POST (`/api/game/progress`) 또는 소켓 emit
-   - 서버는 변경 내역을 관리자 대시보드 룸(`admin-room`)으로 즉시 브로드캐스트
-3. **동시성 50인 부하 고려**:
-   - 50명 동시 액션은 경량 Node.js 싱글 프로세스로도 CPU 1% 미만으로 처리 가능.
-   - 단, 동시 접속 시 WebSocket 핸드셰이크 실패 대비 **HTTP Short Polling(3초 주기) Fallback** 내장.
+1. **서버 런타임**: Next.js 14 App Router (Node.js TypeScript Serverless API Routes on Vercel)
+2. **데이터 영속성 및 데이터베이스**:
+   - **현재 운영 계층**: 3단계 하이브리드 인메모리 + Vercel Blob (`admin_memos.json`, `hidden_reviews.json`) + 구글 시트 연동
+   - **차세대 타겟 DB**: **Supabase (PostgreSQL 15)** 단일 소스 일원화 (인스턴스 분산 캐시 불일치 완전 소멸)
+3. **실시간 통신 프로토콜**:
+   - 관리자 관제 대시보드: HTTP Short Polling (3.5초 주기 경량 통계 API) -> Supabase Realtime (WebSocket CDC 스트리밍 전환 지원)
+4. **동시성 100인 부하 고려**:
+   - 100명 동시 액션은 Vercel Serverless 인프라와 Supabase Connection Pooling(PgBouncer)을 통해 지연 없이 처리 가능.
 
 ### 6.3 QR 코드 규격 및 생성 가이드
 - 참가자 50인에게 사전 인쇄되어 배포될 QR 코드 형식:
@@ -582,6 +582,176 @@ sequenceDiagram
 
 ---
 
-## 10. 결론 및 다음 단계
-본 PRD는 사용자 요청 사항인 **50인 이상 모바일 웹 환경, QR 카메라 인증, 타이핑/페이드인/방이동 애니메이션, 1분 쿨다운 다단계 힌트, 상태 보존, 관리자 실시간 대시보드**를 모두 수용하도록 완전하게 설계되었습니다.
-검토 후 승인 시 즉시 **Phase 1 구현(프로젝트 생성 및 핵심 엔진 개발)**에 착수할 수 있습니다.
+## 10. 결론 및 마일스톤 현황
+본 PRD는 사용자 요청 사항인 **50인~100인 모바일 웹 환경, 6자리 PIN 코드 인증, 타이핑/페이드인/방이동 애니메이션, 다단계 힌트 쿨다운, 상태 보존, 관리자 실시간 관제 대시보드 및 비밀 후기 게시판**을 성공적으로 구현 및 배포 완료했습니다.
+
+---
+
+## 11. Supabase 기반 차세대 백엔드 데이터베이스 구축 시나리오 (Next-Gen Architecture)
+
+### 11.1 도입 배경 및 해결 과제
+1. **서버리스 람다 다중 인스턴스 시차 (Instance Inconsistency) 원천 해결**:
+   - Vercel의 분산 람다 환경에서 각 컨테이너의 `/tmp` 파일 및 메모리 캐시 차이로 인해 대시보드에서 후기 개수가 늘었다 줄었다 깜빡이는 현상(Flickering)을 **단일 클라우드 PostgreSQL DB**로 일원화하여 영구 해결.
+2. **클라이언트 브라우저의 좀비 캐시(Zombie Sync) 차단**:
+   - 브라우저의 `localStorage`에 남은 과거 테스트 후기 데이터가 서버로 역류(Re-injection)하여 삭제 후에도 다시 살아나는 문제를 DB 단일 소스(Single Source of Truth) 원칙으로 원천 차단.
+3. **100인 동시 접속 시 ACID 트랜잭션 및 원자적(Atomic) 데이터 무결성 보장**:
+   - 힌트 해금 카운트, 소요 시간, 클리어 순위, 참가자 메모를 관계형 데이터베이스 수준에서 안전하게 보존.
+
+---
+
+### 11.2 Supabase 시스템 아키텍처 구성도
+
+```mermaid
+flowchart TD
+    subgraph ClientLayer ["클라이언트 계층"]
+        Mobile[모바일 플레이어 브라우저]
+        Admin[운영자 관제 대시보드]
+    end
+
+    subgraph VercelLayer ["Vercel Edge / Serverless API"]
+        AuthAPI["/api/auth/pin"]
+        GameAPI["/api/game/*"]
+        AdminAPI["/api/admin/*"]
+        ReviewAPI["/api/review"]
+    end
+
+    subgraph SupabaseLayer ["Supabase 클라우드 플랫폼 (AWS Seoul ap-northeast-2)"]
+        Postgres[(PostgreSQL 15 데이터베이스)]
+        Realtime[Supabase Realtime 엔진 웹소켓]
+        Storage[Supabase Storage 이미지 버킷]
+    end
+
+    Mobile -->|HTTPS REST| VercelLayer
+    Admin -->|HTTPS REST| VercelLayer
+    Admin -.->|WebSocket 구독| Realtime
+    Realtime -.->|CDC 변경 알림 0.1초 반응| Admin
+    
+    VercelLayer -->|Service Role SDK| Postgres
+    Postgres -->|Trigger / WAL| Realtime
+    Mobile -.->|후기 사진 업로드| Storage
+```
+
+---
+
+### 11.3 데이터베이스 테이블 스키마 설계 (PostgreSQL DDL)
+
+#### (1) 참가자 세션 테이블: `escape_sessions`
+100명의 참가자별 고유 PIN, 진행 중인 방, 체류 시간, 누적 힌트 수, 관리자 메모 등을 관리하는 코어 테이블입니다.
+
+```sql
+CREATE TABLE public.escape_sessions (
+    pin VARCHAR(10) PRIMARY KEY,                         -- 6자리 수사 암호 (예: 4BCANU)
+    nickname VARCHAR(50) NOT NULL,                       -- 관리자 메모 / 참가자 이름 (기본값: 탐정_{PIN})
+    current_room INTEGER NOT NULL DEFAULT 1,             -- 현재 진행 중인 방 번호 (1~11, 11은 클리어)
+    started_at TIMESTAMPTZ,                              -- 첫 입장(시작) 일시
+    room_entered_at TIMESTAMPTZ,                         -- 현재 방 입장 일시 (힌트 쿨다운 산출 기준)
+    last_hint_unlocked_at TIMESTAMPTZ,                   -- 마지막 힌트 해금 일시
+    unlocked_hints INTEGER[] NOT NULL DEFAULT '{}',      -- 현재 방에서 해금한 힌트 인덱스 배열 ([0, 1])
+    total_hints_used INTEGER NOT NULL DEFAULT 0,         -- 전 방 누적 힌트 사용 총 횟수
+    is_cleared BOOLEAN NOT NULL DEFAULT FALSE,           -- 전체 클리어 여부
+    cleared_at TIMESTAMPTZ,                              -- 클리어 완료 일시
+    total_time_seconds INTEGER NOT NULL DEFAULT 0,       -- 최종 누적 소요 시간 (초)
+    last_active_at TIMESTAMPTZ DEFAULT NOW(),            -- 최근 통신 시각 (온라인 여부 판정)
+    status VARCHAR(20) NOT NULL DEFAULT 'ready',         -- 상태 ('ready' | 'playing' | 'cleared')
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 인덱스 설정
+CREATE INDEX idx_sessions_status ON public.escape_sessions(status);
+CREATE INDEX idx_sessions_current_room ON public.escape_sessions(current_room);
+CREATE INDEX idx_sessions_last_active ON public.escape_sessions(last_active_at);
+```
+
+#### (2) 수사 후기 게시판 테이블: `escape_reviews`
+클리어한 참가자만 1회 작성할 수 있는 후기 데이터 테이블입니다.
+
+```sql
+CREATE TABLE public.escape_reviews (
+    id BIGSERIAL PRIMARY KEY,
+    pin VARCHAR(10) NOT NULL UNIQUE REFERENCES public.escape_sessions(pin) ON DELETE CASCADE,
+    author_name VARCHAR(50) NOT NULL,                    -- 후기 작성자 이름
+    content TEXT NOT NULL,                               -- 후기 내용
+    photo_url TEXT,                                      -- 사진 URL (Supabase Storage 또는 Google Drive CDN)
+    is_hidden BOOLEAN NOT NULL DEFAULT FALSE,            -- 관리자 숨김 처리 플래그
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 인덱스 설정
+CREATE INDEX idx_reviews_pin ON public.escape_reviews(pin);
+CREATE INDEX idx_reviews_is_hidden ON public.escape_reviews(is_hidden);
+CREATE INDEX idx_reviews_created_at ON public.escape_reviews(created_at DESC);
+```
+
+---
+
+### 11.4 세부 구현 및 마이그레이션 단계별 시나리오
+
+#### Step 1. Supabase 프로젝트 생성 및 Vercel 환경변수 등록
+1. Supabase 콘솔(supabase.com)에서 신규 프로젝트 `detective-escape-room` 생성 (Region: AWS Seoul `ap-northeast-2`).
+2. 프로젝트 대시보드의 **Project Settings > API**에서 다음 2개 값을 복사하여 Vercel 및 `.env.local`에 등록:
+   ```env
+   NEXT_PUBLIC_SUPABASE_URL=https://[PROJECT_REF].supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=eyJh...
+   ```
+
+#### Step 2. SQL 스키마 배포 및 100인 PIN 시딩 (Seeding)
+1. Supabase **SQL Editor**에서 11.3항의 DDL 쿼리를 실행.
+2. 기존 `passwords.json`에 정의된 100개 PIN 목록을 `escape_sessions` 테이블에 일괄 주입(Bulk Insert):
+   ```sql
+   INSERT INTO public.escape_sessions (pin, nickname, status)
+   VALUES 
+   ('4BCANU', '탐정_01', 'ready'),
+   ('JQTY5L', '탐정_02', 'ready'),
+   ...
+   ON CONFLICT (pin) DO NOTHING;
+   ```
+
+#### Step 3. Supabase SDK 클라이언트 모듈 구현 (`src/lib/supabase.ts`)
+```typescript
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+// 백엔드 API 전용 관리자 클라이언트 (서버리스 람다에서 Service Role 권한으로 안전하게 접근)
+export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: { persistSession: false },
+});
+```
+
+#### Step 4. 코어 스토어(`src/lib/store.ts`) 로직 Supabase 쿼리 전환
+- **`getSession(pin)`**: `supabaseAdmin.from('escape_sessions').select('*').eq('pin', pin).single()`
+- **`startOrResumeSession(pin)`**: 세션이 없으면 400 반환, 있으면 `started_at = NOW()`, `status = 'playing'` 업데이트
+- **`submitAnswer(pin, answer)`**: 정답 판정 시 `current_room = current_room + 1`, `room_entered_at = NOW()`, `unlocked_hints = '{}'` 업데이트
+- **`unlockHint(pin)`**: `total_hints_used = total_hints_used + 1` 및 `unlocked_hints = array_append(unlocked_hints, nextIdx)`
+- **`updateSessionNickname(pin, memo)`**: 관리자 메모를 `escape_sessions.nickname`에 영구 저장 (더 이상 파일/인스턴스 불일치 없음)
+- **`toggleReviewVisibility(pin, hide)`**: `escape_reviews.is_hidden` 업데이트 (전 인스턴스에 즉시 반영)
+
+#### Step 5. 클라이언트 좀비 캐시 제거
+- `src/app/clear/page.tsx`에서 로컬스토리지의 후기를 서버로 재전송하는 임의 `unshift` 및 `sync` 로직을 완전 제거하여, 오직 Supabase DB 응답 데이터만 표시.
+
+#### Step 6. 관리자 대시보드 Realtime 실시간 스트리밍 적용
+- 관리자 화면(`/admin`)에서 3.5초 주기 무한 폴링 대신, Supabase Realtime 채널을 구독:
+  ```typescript
+  const channel = supabaseAdmin
+    .channel('realtime_sessions')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'escape_sessions' }, (payload) => {
+      // 누군가 방을 넘어가거나 힌트를 쓰면 0.1초 만에 대시보드 자동 갱신!
+      updateLocalUserStats(payload);
+    })
+    .subscribe();
+  ```
+
+---
+
+### 11.5 도입 후 기대 효과 비교
+
+| 평가 항목 | 기존 (인메모리 + /tmp + Blob) | Supabase 전환 후 |
+| :--- | :--- | :--- |
+| **인스턴스 분산 깜빡임** | 람다 분산 시 N <-> N+1 깜빡임 발생 | **완전 소멸 (0% 발생)** |
+| **관리자 메모 지속성** | 서버리스 인스턴스 간 동기화 필요 | **DB 컬럼에 즉시 영구 저장** |
+| **힌트 카운트 무결성** | 람다 재부팅 시 초기화 리스크 | **PostgreSQL 원자적 증분 보장** |
+| **대시보드 실시간성** | 3.5초마다 HTTP 폴링 | **Postgres Realtime으로 0.1초 반응** |
+| **데이터 관리 편의성** | JSON 파일 및 Vercel Blob 콘솔 확인 | **Supabase Table Editor에서 엑셀처럼 실시간 수정 가능** |
+| **비용** | Vercel 기본 무료 | **Supabase 무료 티어 (월 500MB, 50,000 MAU 무료)** |
