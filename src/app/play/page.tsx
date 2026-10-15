@@ -481,18 +481,12 @@ export default function PlayPage() {
           <section className="animate-fadeIn flex flex-col gap-4">
             {/* Clue / Problem Image Card */}
             <div className="rounded-2xl bg-[#26201b] border border-stone-700/80 p-3 shadow-2xl relative overflow-hidden group">
-              <div
-                className="relative w-full rounded-xl overflow-hidden bg-black/40 border border-stone-800 flex items-center justify-center max-h-[60vh] transition-all duration-300 mx-auto"
-                style={{
-                  aspectRatio: puzzle.roomNumber === 3 ? "800 / 533" : "597 / 800",
-                }}
-              >
-                <Image
+              <div className="relative w-full rounded-xl overflow-hidden bg-black/40 border border-stone-800 flex items-center justify-center transition-all duration-300 mx-auto">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
                   src={puzzle.image}
                   alt={`문제 ${puzzle.roomNumber} 단서`}
-                  fill
-                  priority
-                  className="object-contain cursor-zoom-in group-hover:scale-102 transition duration-300"
+                  className="w-full h-auto max-h-[65vh] object-contain rounded-xl block cursor-zoom-in group-hover:scale-101 transition duration-300 mx-auto"
                   onClick={() => setIsLightboxOpen(true)}
                 />
 
