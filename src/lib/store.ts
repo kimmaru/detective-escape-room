@@ -569,18 +569,9 @@ export async function syncReviewsFromGoogleSheet(): Promise<void> {
 }
 
 function saveReviewToCache(reviewWithPin: ReviewData & { pin: string }) {
-  try {
-    const list = getAllReviews(true);
-    const pinKey = reviewWithPin.pin.toUpperCase();
-    const isHidden =
-      cachedHiddenPins.has(pinKey) || reviewWithPin.hidden === true;
-
-    const filtered = list.filter((r) => r.pin.toUpperCase() !== pinKey);
-    filtered.unshift({ ...reviewWithPin, hidden: isHidden });
-    fs.writeFileSync(REVIEWS_FILE, JSON.stringify(filtered, null, 2));
-  } catch (e) {
-    console.error("Failed to save review to /tmp:", e);
-  }
+  saveReviewToDurableStore(reviewWithPin).catch((e) => {
+    console.error("Failed to save review to durable cache:", e);
+  });
 }
 
 export async function toggleReviewVisibility(
