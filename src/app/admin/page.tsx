@@ -441,7 +441,7 @@ export default function AdminPage() {
   );
 
   return (
-    <div className="min-h-[100dvh] bg-[#120f0d] text-stone-100">
+    <div className="min-h-[100dvh] bg-[#120f0d] text-stone-100 select-text">
       {/* Desktop Optimized Container */}
       <div className="w-full max-w-[1750px] mx-auto px-4 sm:px-6 lg:px-10 py-6">
         {/* Top Header */}
