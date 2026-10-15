@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionAsync } from "@/lib/store";
 import { PUZZLES } from "@/data/puzzles";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(req: NextRequest) {
   const pin = req.nextUrl.searchParams.get("pin");
   if (!pin) {
@@ -13,12 +16,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
+  const noCacheHeaders = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+  };
+
   if (session.isCleared) {
-    return NextResponse.json({
-      session,
-      isCleared: true,
-      totalPuzzles: PUZZLES.length,
-    });
+    return NextResponse.json(
+      {
+        session,
+        isCleared: true,
+        totalPuzzles: PUZZLES.length,
+      },
+      { headers: noCacheHeaders }
+    );
   }
 
   const puzzle = PUZZLES.find((p) => p.roomNumber === session.currentRoom);
@@ -40,20 +52,23 @@ export async function GET(req: NextRequest) {
     text: puzzle.hints[idx],
   }));
 
-  return NextResponse.json({
-    session,
-    puzzle: {
-      roomNumber: puzzle.roomNumber,
-      title: puzzle.title,
-      image: puzzle.image,
-      dialogue: puzzle.dialogue,
-      question: puzzle.question,
-      formatGuide: puzzle.formatGuide,
-      totalHints: puzzle.hints.length,
+  return NextResponse.json(
+    {
+      session,
+      puzzle: {
+        roomNumber: puzzle.roomNumber,
+        title: puzzle.title,
+        image: puzzle.image,
+        dialogue: puzzle.dialogue,
+        question: puzzle.question,
+        formatGuide: puzzle.formatGuide,
+        totalHints: puzzle.hints.length,
+      },
+      unlockedHints: unlockedHintsList,
+      hintCooldownRemaining: remainingCooldown,
+      canUnlockHint: remainingCooldown === 0 && session.unlockedHints.length < puzzle.hints.length,
+      totalPuzzles: PUZZLES.length,
     },
-    unlockedHints: unlockedHintsList,
-    hintCooldownRemaining: remainingCooldown,
-    canUnlockHint: remainingCooldown === 0 && session.unlockedHints.length < puzzle.hints.length,
-    totalPuzzles: PUZZLES.length,
-  });
+    { headers: noCacheHeaders }
+  );
 }

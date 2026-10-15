@@ -866,7 +866,11 @@ export async function startOrResumeSessionAsync(
         .single();
 
       if (!error && data) {
-        return dbSessionToPlayerSession(data, existing.review);
+        const updatedSession = dbSessionToPlayerSession(data, existing.review);
+        const store = getStore();
+        store.sessions[cleanPin] = updatedSession;
+        savePersistedSessions(store.sessions);
+        return updatedSession;
       }
     }
   }
@@ -963,7 +967,11 @@ export async function syncClientSessionAsync(
           .single();
 
         if (!error && data) {
-          return dbSessionToPlayerSession(data, existing.review);
+          const updatedSession = dbSessionToPlayerSession(data, existing.review);
+          const store = getStore();
+          store.sessions[cleanPin] = updatedSession;
+          savePersistedSessions(store.sessions);
+          return updatedSession;
         }
       }
     }
@@ -1105,6 +1113,9 @@ export async function submitAnswerAsync(
 
       if (!error && data) {
         const updatedSession = dbSessionToPlayerSession(data, session.review);
+        const store = getStore();
+        store.sessions[cleanPin] = updatedSession;
+        savePersistedSessions(store.sessions);
         return {
           success: true,
           nextRoom: updatedSession.isCleared ? 10 : updatedSession.currentRoom,

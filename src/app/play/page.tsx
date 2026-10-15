@@ -83,6 +83,7 @@ export default function PlayPage() {
   const startedAtRef = useRef<number | null>(null);
   const roomEnteredAtRef = useRef<number>(Date.now());
   const lastHintAtRef = useRef<number | null>(null);
+  const currentRoomRef = useRef<number>(1);
 
   // Cooldown countdown timer (all hints: 30s)
   useEffect(() => {
@@ -105,7 +106,10 @@ export default function PlayPage() {
   // Load session from server
   const loadGameState = useCallback(async (activePin: string) => {
     try {
-      const res = await fetch(`/api/game/state?pin=${activePin}`);
+      const res = await fetch(
+        `/api/game/state?pin=${encodeURIComponent(activePin)}&_t=${Date.now()}`,
+        { cache: "no-store" }
+      );
       const data = await res.json();
 
       if (!res.ok) {
@@ -123,8 +127,21 @@ export default function PlayPage() {
       }
 
       const s = data.session;
+      // Stale response guard: If client already reached a higher room, never revert it
+      if (
+        currentRoomRef.current > 1 &&
+        s.currentRoom < currentRoomRef.current &&
+        s.status !== "ready"
+      ) {
+        console.warn(
+          `Ignoring stale room state (${s.currentRoom} < ${currentRoomRef.current})`
+        );
+        return;
+      }
+
       setNickname(s.nickname || "탐정 조수");
       setCurrentRoom(s.currentRoom);
+      currentRoomRef.current = s.currentRoom;
       setPuzzle(data.puzzle);
       setUnlockedHints(data.unlockedHints || []);
       setTotalPuzzles(data.totalPuzzles || 10);
@@ -172,7 +189,9 @@ export default function PlayPage() {
 
       setPin(parsed.pin);
       setNickname(parsed.nickname || `탐정_${parsed.pin}`);
-      setCurrentRoom(parsed.currentRoom || 1);
+      const initialRoom = parsed.currentRoom || 1;
+      setCurrentRoom(initialRoom);
+      currentRoomRef.current = initialRoom;
       if (typeof parsed.totalHintsUsed === "number") {
         setTotalHintsUsed(parsed.totalHintsUsed);
       }
@@ -195,7 +214,7 @@ export default function PlayPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pin,
-          currentRoom,
+          currentRoom: currentRoomRef.current,
           startedAt: startedAtRef.current,
           roomEnteredAt: roomEnteredAtRef.current,
           totalHintsUsed,
@@ -204,7 +223,7 @@ export default function PlayPage() {
     }, 15000);
 
     return () => clearInterval(interval);
-  }, [pin, currentRoom, totalHintsUsed]);
+  }, [pin, totalHintsUsed]);
 
   // Stable callback for typing completion
   const handleTypingComplete = useCallback(() => {
@@ -353,7 +372,7 @@ export default function PlayPage() {
           setAnswerFeedbackOverlay(null);
           setIsRoomTransitioning(true); // 완전한 페이드아웃 (화면 가림)
 
-          setTimeout(async () => {
+          setTimeout(() => {
             // 화면이 완전히 가려진 상태에서 새 방 데이터로 원자적(동시) 교체!
             const now = Date.now();
             roomEnteredAtRef.current = now;
@@ -368,11 +387,19 @@ export default function PlayPage() {
             if (data.nextPuzzle) {
               setPuzzle(data.nextPuzzle);
             }
-            setCurrentRoom(data.nextRoom);
+            const nextRoomNum = data.nextRoom || currentRoomRef.current + 1;
+            setCurrentRoom(nextRoomNum);
+            currentRoomRef.current = nextRoomNum;
             setIsTypingFinished(false);
 
-            // 2. 서버 상태 동기화 완료 대기
-            await loadGameState(pin);
+            // 2. 최신 세션을 LocalStorage에 즉시 확정 저장 (새로고침/재접속 대비)
+            if (data.session) {
+              try {
+                localStorage.setItem("escape_session", JSON.stringify(data.session));
+              } catch (e) {
+                console.warn("Storage save failed:", e);
+              }
+            }
 
             // 3. 새 방의 데이터가 완벽하게 준비된 후 부드럽게 페이드인
             setTimeout(() => {
@@ -470,11 +497,13 @@ export default function PlayPage() {
                 />
 
                 <button
+                  type="button"
                   onClick={() => setIsLightboxOpen(true)}
-                  className="absolute bottom-3 right-3 p-2 rounded-xl bg-black/75 text-amber-300 hover:text-white backdrop-blur-md border border-amber-600/40 flex items-center gap-1.5 text-xs font-bold shadow-lg"
+                  aria-label="단서 확대"
+                  title="단서 확대"
+                  className="absolute bottom-2.5 right-2.5 p-2 rounded-xl bg-black/80 hover:bg-black text-amber-400 hover:text-white backdrop-blur-md border border-amber-600/50 flex items-center justify-center shadow-lg transition active:scale-95"
                 >
                   <ZoomIn className="w-4 h-4" />
-                  <span>단서 확대</span>
                 </button>
               </div>
 
