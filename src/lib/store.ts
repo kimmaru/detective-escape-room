@@ -1243,7 +1243,7 @@ export async function unlockHintAsync(
     };
   }
 
-  const cooldownDuration = nextHintIdx === 0 ? 120 : 60;
+  const cooldownDuration = 30; // 모든 힌트 30초 쿨다운
   const COOLDOWN_MS = cooldownDuration * 1000;
   const timeSinceLastEvent = now - lastHintAt;
 
@@ -1323,7 +1323,7 @@ export function unlockHint(
     };
   }
 
-  const cooldownDuration = nextHintIdx === 0 ? 120 : 60;
+  const cooldownDuration = 30; // 모든 힌트 30초 쿨다운
   const COOLDOWN_MS = cooldownDuration * 1000;
   const timeSinceLastEvent = now - lastHintAt;
 

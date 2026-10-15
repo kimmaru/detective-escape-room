@@ -26,11 +26,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Puzzle not found" }, { status: 404 });
   }
 
-  // Calculate hint cooldown (first hint: 120s, subsequent: 60s)
+  // Calculate hint cooldown (all hints: 30s)
   const now = Date.now();
   const baseTime = session.lastHintUnlockedAt || session.roomEnteredAt || session.startedAt || now;
   const timeSinceLast = now - baseTime;
-  const cooldownDuration = session.unlockedHints.length === 0 ? 120 : 60;
+  const cooldownDuration = 30;
   const COOLDOWN_MS = cooldownDuration * 1000;
   const remainingCooldown = Math.max(0, Math.ceil((COOLDOWN_MS - timeSinceLast) / 1000));
 

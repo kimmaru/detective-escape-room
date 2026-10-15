@@ -23,6 +23,7 @@ interface PuzzleData {
   image: string;
   dialogue: string;
   question: string;
+  formatGuide?: string;
   totalHints: number;
 }
 
@@ -49,8 +50,8 @@ export default function PlayPage() {
   const [isShaking, setIsShaking] = useState<boolean>(false);
   const [answerFeedbackOverlay, setAnswerFeedbackOverlay] = useState<"correct" | "wrong" | null>(null);
 
-  // Hint cooldown (2 minutes = 120s)
-  const [hintCooldown, setHintCooldown] = useState<number>(120);
+  // Hint cooldown (all hints: 30s)
+  const [hintCooldown, setHintCooldown] = useState<number>(30);
   const [canUnlockNext, setCanUnlockNext] = useState<boolean>(false);
 
   // Modals
@@ -69,14 +70,14 @@ export default function PlayPage() {
   const roomEnteredAtRef = useRef<number>(Date.now());
   const lastHintAtRef = useRef<number | null>(null);
 
-  // Cooldown countdown timer (first hint: 120s, subsequent: 60s)
+  // Cooldown countdown timer (all hints: 30s)
   useEffect(() => {
     const timer = setInterval(() => {
       if (startedAtRef.current) {
         setElapsedSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000));
       }
 
-      const cooldownDuration = unlockedHints.length === 0 ? 120 : 60;
+      const cooldownDuration = 30;
       const baseTime = lastHintAtRef.current || roomEnteredAtRef.current;
       const elapsedSinceBase = Math.floor((Date.now() - baseTime) / 1000);
       const remaining = Math.max(0, cooldownDuration - elapsedSinceBase);
@@ -121,10 +122,10 @@ export default function PlayPage() {
       if (s.roomEnteredAt) roomEnteredAtRef.current = s.roomEnteredAt;
       if (s.lastHintUnlockedAt) lastHintAtRef.current = s.lastHintUnlockedAt;
 
-      // Update cooldown based on server data (first: 120s, subsequent: 60s)
+      // Update cooldown based on server data (all hints: 30s)
       const base = s.lastHintUnlockedAt || s.roomEnteredAt || Date.now();
       const elapsed = Math.floor((Date.now() - base) / 1000);
-      const targetCooldown = (s.unlockedHints || []).length === 0 ? 120 : 60;
+      const targetCooldown = 30;
       const rem = Math.max(0, targetCooldown - elapsed);
       setHintCooldown(rem);
       setCanUnlockNext(rem === 0 && (data.puzzle ? (data.unlockedHints || []).length < data.puzzle.totalHints : false));
@@ -247,7 +248,7 @@ export default function PlayPage() {
         }
       } catch {}
       lastHintAtRef.current = Date.now();
-      setHintCooldown(60);
+      setHintCooldown(30);
       setCanUnlockNext(false);
       setIsHintModalOpen(true);
     } catch {
@@ -345,7 +346,7 @@ export default function PlayPage() {
             const now = Date.now();
             roomEnteredAtRef.current = now;
             lastHintAtRef.current = null;
-            setHintCooldown(120);
+            setHintCooldown(30);
             setCanUnlockNext(false);
             setUnlockedHints([]);
             setAnswerInput("");
@@ -465,8 +466,16 @@ export default function PlayPage() {
                 </button>
               </div>
 
-              {/* Image Touch Guide */}
-              <div className="mt-2.5 text-center">
+              {/* Answer Format Guide & Image Touch Guide */}
+              <div className="mt-3 text-center flex flex-col items-center gap-1.5">
+                {puzzle.formatGuide && (
+                  <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold shadow-sm">
+                    <span className="text-[13px]">🔍</span>
+                    <span>
+                      사진 속에 <strong className="text-amber-200 underline underline-offset-2 font-bold">{puzzle.formatGuide}</strong> 암호가 숨어있어.
+                    </span>
+                  </div>
+                )}
                 <span className="text-[11px] text-stone-400">
                   이미지를 터치하면 크게 볼 수 있습니다
                 </span>
@@ -499,7 +508,7 @@ export default function PlayPage() {
           </div>
         )}
 
-        {/* Hint button placed directly above input box on the left */}
+        {/* Hint button & Next hint countdown display */}
         <div className="flex items-center justify-between mb-2">
           <button
             type="button"
@@ -526,6 +535,22 @@ export default function PlayPage() {
               <span>단서 힌트 ({hintCooldown}초 후)</span>
             )}
           </button>
+
+          {/* 힌트 한 번 보고 난 후에도 다음 힌트 남은 시간 표시 */}
+          {unlockedHints.length > 0 && puzzle && unlockedHints.length < puzzle.totalHints && (
+            <div className="flex items-center gap-1.5 text-xs font-mono px-3 py-1.5 rounded-xl bg-stone-900/90 border border-stone-800 text-stone-300 shadow-sm animate-fadeIn">
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              {hintCooldown > 0 ? (
+                <span>
+                  다음 힌트: <strong className="text-amber-400 font-bold">{hintCooldown}초</strong>
+                </span>
+              ) : (
+                <span className="text-emerald-400 font-bold animate-pulse">
+                  다음 힌트 가능!
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Answer Input Field (Placeholder simplified as requested) */}

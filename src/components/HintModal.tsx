@@ -31,7 +31,7 @@ export default function HintModal({
 
   const nextStep = unlockedHints.length + 1;
   const isAllUnlocked = unlockedHints.length >= totalHints;
-  const isNextAnswer = nextStep === 4;
+  const isNextAnswer = nextStep === totalHints;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
@@ -59,8 +59,8 @@ export default function HintModal({
             </div>
           ) : (
             unlockedHints.map((hint, i) => {
-              const isAnswer = hint.index === 3;
-              const isFormat = hint.index === 2;
+              const isAnswer =
+                hint.text.startsWith("🔑") || hint.index === totalHints - 1;
 
               return (
                 <div
@@ -68,8 +68,6 @@ export default function HintModal({
                   className={`p-4 rounded-xl border text-sm leading-relaxed ${
                     isAnswer
                       ? "bg-red-950/40 border-red-700/60 text-red-100"
-                      : isFormat
-                      ? "bg-amber-950/40 border-amber-600/50 text-amber-100"
                       : "bg-stone-800/80 border-stone-700 text-stone-200"
                   }`}
                 >
@@ -78,16 +76,10 @@ export default function HintModal({
                       className={`text-[11px] font-bold px-2 py-0.5 rounded border ${
                         isAnswer
                           ? "bg-red-900 text-red-200 border-red-700"
-                          : isFormat
-                          ? "bg-amber-900 text-amber-200 border-amber-700"
                           : "bg-stone-700 text-amber-300 border-stone-600"
                       }`}
                     >
-                      {isAnswer
-                        ? "🔑 최종 정답"
-                        : isFormat
-                        ? "💡 암호 형식"
-                        : `단서 #${hint.index + 1}`}
+                      {isAnswer ? "🔑 최종 정답" : `단서 #${hint.index + 1}`}
                     </span>
                   </div>
                   <p className="whitespace-pre-line font-medium text-stone-100 text-[14px]">
@@ -134,8 +126,6 @@ export default function HintModal({
                       <span>
                         {isLoading
                           ? "불러오는 중..."
-                          : nextStep === 3
-                          ? "💡 다음 단서 보기 (암호 형식)"
                           : `💡 다음 단서 보기 (단서 #${nextStep})`}
                       </span>
                     </>
