@@ -59,10 +59,24 @@ export default function PlayPage() {
   const [isLightboxOpen, setIsLightboxOpen] = useState<boolean>(false);
   const [isHintLoading, setIsHintLoading] = useState<boolean>(false);
 
-  // Form input & feedback
   const [answerInput, setAnswerInput] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const feedbackTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const showErrorFeedback = useCallback((msg: string) => {
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    setFeedbackMsg({ type: "error", text: msg });
+    feedbackTimerRef.current = setTimeout(() => {
+      setFeedbackMsg(null);
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    };
+  }, []);
 
   // Timestamps
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -226,7 +240,7 @@ export default function PlayPage() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        setFeedbackMsg({ type: "error", text: data.message || "단서 해금 실패" });
+        showErrorFeedback(data.message || "단서 해금 실패");
         setIsHintLoading(false);
         return;
       }
@@ -252,7 +266,7 @@ export default function PlayPage() {
       setCanUnlockNext(false);
       setIsHintModalOpen(true);
     } catch {
-      setFeedbackMsg({ type: "error", text: "단서를 불러오는 중 통신 에러가 발생했습니다." });
+      showErrorFeedback("단서를 불러오는 중 통신 에러가 발생했습니다.");
     } finally {
       setIsHintLoading(false);
     }
@@ -263,6 +277,7 @@ export default function PlayPage() {
     e.preventDefault();
     if (!pin || !answerInput.trim() || isSubmitting) return;
 
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
     setIsSubmitting(true);
     setFeedbackMsg(null);
 
@@ -277,10 +292,7 @@ export default function PlayPage() {
       if (!res.ok || !data.success) {
         setIsShaking(true);
         setAnswerFeedbackOverlay("wrong");
-        setFeedbackMsg({
-          type: "error",
-          text: data.message || "오답입니다! 단서를 다시 확인해보세요.",
-        });
+        showErrorFeedback(data.message || "오답입니다! 단서를 다시 확인해보세요.");
         setAnswerInput("");
         setTimeout(() => setIsShaking(false), 500);
         setTimeout(() => {
@@ -373,7 +385,7 @@ export default function PlayPage() {
     } catch {
       setAnswerFeedbackOverlay(null);
       setIsSubmitting(false);
-      setFeedbackMsg({ type: "error", text: "정답 제출 중 오류가 발생했습니다." });
+      showErrorFeedback("정답 제출 중 오류가 발생했습니다.");
     }
   };
 
