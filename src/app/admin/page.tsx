@@ -28,6 +28,10 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  Maximize2,
+  Sparkles,
 } from "lucide-react";
 import { getPinOrder } from "@/data/pinOrder";
 
@@ -202,6 +206,59 @@ export default function AdminPage() {
   const [reviewFilter, setReviewFilter] = useState<"all" | "visible" | "hidden">("all");
   const [reviewSearch, setReviewSearch] = useState<string>("");
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [selectedReview, setSelectedReview] = useState<AdminReview | null>(null);
+
+  // Filtered reviews list for grid & detail modal navigation
+  const filteredReviews = reviews.filter((r) => {
+    if (reviewFilter === "visible" && r.hidden) return false;
+    if (reviewFilter === "hidden" && !r.hidden) return false;
+    if (reviewSearch) {
+      const q = reviewSearch.toLowerCase();
+      const matchPin = r.pin?.toLowerCase().includes(q);
+      const matchName = r.name?.toLowerCase().includes(q);
+      const matchContent = r.content?.toLowerCase().includes(q);
+      return matchPin || matchName || matchContent;
+    }
+    return true;
+  });
+
+  const currentReviewIndex = selectedReview
+    ? filteredReviews.findIndex(
+        (r) => r.pin.toUpperCase() === selectedReview.pin.toUpperCase()
+      )
+    : -1;
+
+  const handlePrevReview = () => {
+    if (currentReviewIndex > 0) {
+      setSelectedReview(filteredReviews[currentReviewIndex - 1]);
+    }
+  };
+
+  const handleNextReview = () => {
+    if (
+      currentReviewIndex >= 0 &&
+      currentReviewIndex < filteredReviews.length - 1
+    ) {
+      setSelectedReview(filteredReviews[currentReviewIndex + 1]);
+    }
+  };
+
+  // Keyboard navigation for review card modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!selectedReview) return;
+      if (previewPhoto) return; // let image lightbox handle itself first
+      if (e.key === "Escape") {
+        setSelectedReview(null);
+      } else if (e.key === "ArrowLeft") {
+        handlePrevReview();
+      } else if (e.key === "ArrowRight") {
+        handleNextReview();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedReview, previewPhoto, currentReviewIndex, filteredReviews]);
 
   const handleAction = async (action: "pass" | "reset", pin?: string) => {
     if (action === "reset" && !pin) {
@@ -292,6 +349,11 @@ export default function AdminPage() {
       prev.map((r) =>
         r.pin.toUpperCase() === pin.trim().toUpperCase() ? { ...r, hidden: targetHide } : r
       )
+    );
+    setSelectedReview((prev) =>
+      prev && prev.pin.toUpperCase() === pin.trim().toUpperCase()
+        ? { ...prev, hidden: targetHide }
+        : prev
     );
 
     try {
@@ -818,139 +880,119 @@ export default function AdminPage() {
               </div>
 
               {/* Review List Grid */}
-              {(() => {
-                const list = reviews.filter((r) => {
-                  if (reviewFilter === "visible" && r.hidden) return false;
-                  if (reviewFilter === "hidden" && !r.hidden) return false;
-                  if (reviewSearch) {
-                    const q = reviewSearch.toLowerCase();
-                    const matchPin = r.pin?.toLowerCase().includes(q);
-                    const matchName = r.name?.toLowerCase().includes(q);
-                    const matchContent = r.content?.toLowerCase().includes(q);
-                    return matchPin || matchName || matchContent;
-                  }
-                  return true;
-                });
-
-                if (isReviewsLoading && reviews.length === 0) {
-                  return (
-                    <div className="py-12 text-center text-amber-400/80 text-xs rounded-2xl bg-[#161210] border border-stone-800/80 flex items-center justify-center gap-2">
-                      <RefreshCw className="w-4 h-4 animate-spin text-amber-500" />
-                      <span>후기 목록을 불러오는 중입니다...</span>
-                    </div>
-                  );
-                }
-
-                if (list.length === 0) {
-                  return (
-                    <div className="py-10 text-center text-stone-500 text-xs rounded-2xl bg-[#161210] border border-stone-800/80">
-                      {reviews.length > 0
-                        ? "선택한 조건에 맞는 후기가 없습니다."
-                        : "아직 등록된 수사 후기가 없습니다."}
-                    </div>
-                  );
-                }
-
-                return (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 max-h-[500px] overflow-y-auto pr-1">
-                    {list.map((r) => {
-                      const isHidden = !!r.hidden;
-                      return (
-                        <div
-                          key={r.pin}
-                          className={`p-4 rounded-2xl border transition flex flex-col justify-between ${
-                            isHidden
-                              ? "bg-[#181412]/80 border-red-900/40 opacity-75"
-                              : "bg-[#221b17] border-stone-800 hover:border-amber-700/60"
-                          }`}
-                        >
-                          <div>
-                            {/* Card Top */}
-                            <div className="flex items-start justify-between gap-2 mb-2.5 pb-2 border-b border-stone-800/80">
-                              <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="px-2 py-0.5 rounded-md bg-amber-950 font-mono font-black text-amber-400 text-xs tracking-wider border border-amber-600/50 shadow-sm">
-                                    PIN: {r.pin}
-                                  </span>
-                                  <span className="font-bold text-sm text-stone-100">
-                                    {r.name}
-                                  </span>
-                                </div>
-                                <span className="text-[10px] text-stone-500 font-mono mt-0.5 block">
-                                  {r.createdAt ? new Date(r.createdAt).toLocaleString("ko-KR") : "-"}
+              {isReviewsLoading && reviews.length === 0 ? (
+                <div className="py-12 text-center text-amber-400/80 text-xs rounded-2xl bg-[#161210] border border-stone-800/80 flex items-center justify-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin text-amber-500" />
+                  <span>후기 목록을 불러오는 중입니다...</span>
+                </div>
+              ) : filteredReviews.length === 0 ? (
+                <div className="py-10 text-center text-stone-500 text-xs rounded-2xl bg-[#161210] border border-stone-800/80">
+                  {reviews.length > 0
+                    ? "선택한 조건에 맞는 후기가 없습니다."
+                    : "아직 등록된 수사 후기가 없습니다."}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 max-h-[500px] overflow-y-auto pr-1">
+                  {filteredReviews.map((r) => {
+                    const isHidden = !!r.hidden;
+                    return (
+                      <div
+                        key={r.pin}
+                        onClick={() => setSelectedReview(r)}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer group hover:scale-[1.01] hover:shadow-xl ${
+                          isHidden
+                            ? "bg-[#181412]/80 border-red-900/40 opacity-75 hover:opacity-100 hover:border-red-700"
+                            : "bg-[#221b17] border-stone-800 hover:border-amber-500 hover:bg-[#28201a]"
+                        }`}
+                        title="클릭하여 새 카드로 이름, 사진, 후기 전체 보기"
+                      >
+                        <div>
+                          {/* Card Top */}
+                          <div className="flex items-start justify-between gap-2 mb-2.5 pb-2 border-b border-stone-800/80">
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="px-2 py-0.5 rounded-md bg-amber-950 font-mono font-black text-amber-400 text-xs tracking-wider border border-amber-600/50 shadow-sm">
+                                  PIN: {r.pin}
+                                </span>
+                                <span className="font-bold text-sm text-stone-100 group-hover:text-amber-300 transition">
+                                  {r.name}
                                 </span>
                               </div>
-
-                              {isHidden ? (
-                                <span className="px-2 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-800 text-[10px] font-bold flex items-center gap-1 shrink-0">
-                                  <EyeOff className="w-3 h-3" />
-                                  <span>게시판 숨김됨</span>
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold flex items-center gap-1 shrink-0">
-                                  <Eye className="w-3 h-3" />
-                                  <span>게시판 노출 중</span>
-                                </span>
-                              )}
+                              <span className="text-[10px] text-stone-500 font-mono mt-0.5 block">
+                                {r.createdAt ? new Date(r.createdAt).toLocaleString("ko-KR") : "-"}
+                              </span>
                             </div>
 
-                            {/* Photo thumbnail if exists */}
-                            {r.photo && (
-                              <div
-                                className="relative mb-2.5 rounded-xl overflow-hidden border border-amber-600/30 bg-stone-950 h-32 group cursor-pointer"
-                                onClick={() => setPreviewPhoto(r.photo || null)}
-                              >
-                                <img
-                                  src={r.photo}
-                                  alt={`${r.name} 사진`}
-                                  className="w-full h-full object-cover group-hover:scale-105 transition"
-                                />
-                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-[11px] font-bold text-stone-200 gap-1">
-                                  <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
-                                  <span>사진 크게보기</span>
-                                </div>
-                              </div>
+                            {isHidden ? (
+                              <span className="px-2 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-800 text-[10px] font-bold flex items-center gap-1 shrink-0">
+                                <EyeOff className="w-3 h-3" />
+                                <span>게시판 숨김됨</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold flex items-center gap-1 shrink-0">
+                                <Eye className="w-3 h-3" />
+                                <span>게시판 노출 중</span>
+                              </span>
                             )}
-
-                            {/* Content text */}
-                            <p className="text-xs text-stone-300 leading-relaxed whitespace-pre-wrap line-clamp-4 font-medium mb-3">
-                              {r.content}
-                            </p>
                           </div>
 
-                          {/* Card Action Button */}
-                          <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between">
-                            <span className="text-[10px] text-stone-500">
-                              {isHidden ? "게시판에서 숨겨진 상태입니다" : "클리어 유저에게 노출 중입니다"}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleToggleReview(r.pin, !isHidden)}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
-                                isHidden
-                                  ? "bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 border border-emerald-600"
-                                  : "bg-red-950/90 hover:bg-red-900 text-red-200 border border-red-700"
-                              }`}
-                            >
-                              {isHidden ? (
-                                <>
-                                  <Eye className="w-3.5 h-3.5" />
-                                  <span>게시판에 노출하기</span>
-                                </>
-                              ) : (
-                                <>
-                                  <EyeOff className="w-3.5 h-3.5" />
-                                  <span>게시판에서 숨기기</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
+                          {/* Photo thumbnail if exists */}
+                          {r.photo && (
+                            <div className="relative mb-2.5 rounded-xl overflow-hidden border border-amber-600/30 bg-stone-950 h-32 group/img">
+                              <img
+                                src={r.photo}
+                                alt={`${r.name} 사진`}
+                                className="w-full h-full object-cover group-hover/img:scale-105 transition duration-300"
+                              />
+                              <div className="absolute inset-0 bg-black/45 opacity-0 group-hover/img:opacity-100 transition flex items-center justify-center text-[11px] font-bold text-stone-200 gap-1 backdrop-blur-[1px]">
+                                <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
+                                <span>새 카드로 크게보기</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Content text */}
+                          <p className="text-xs text-stone-300 leading-relaxed whitespace-pre-wrap line-clamp-3 font-medium mb-3">
+                            {r.content}
+                          </p>
                         </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
+
+                        {/* Card Action Button & Hint */}
+                        <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-amber-400/90 font-medium flex items-center gap-1 group-hover:text-amber-300 transition">
+                            <Sparkles className="w-3 h-3 text-amber-400" />
+                            <span>새 카드로 자세히 보기</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleReview(r.pin, !isHidden);
+                            }}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0 ${
+                              isHidden
+                                ? "bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 border border-emerald-600"
+                                : "bg-red-950/90 hover:bg-red-900 text-red-200 border border-red-700"
+                            }`}
+                          >
+                            {isHidden ? (
+                              <>
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>노출하기</span>
+                              </>
+                            ) : (
+                              <>
+                                <EyeOff className="w-3.5 h-3.5" />
+                                <span>숨기기</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
         </section>
@@ -1146,9 +1188,27 @@ export default function AdminPage() {
                         </td>
                         <td className="py-3.5 px-5">
                           {u.isCleared ? (
-                            <span className="px-2.5 py-1 rounded-lg bg-emerald-950/80 border border-emerald-600 text-emerald-300 font-bold font-mono">
-                              CLEAR 🏆
-                            </span>
+                            <div className="flex flex-col gap-1.5 items-start">
+                              <span className="px-2.5 py-1 rounded-lg bg-emerald-950/80 border border-emerald-600 text-emerald-300 font-bold font-mono">
+                                CLEAR 🏆
+                              </span>
+                              {reviews.some((r) => r.pin.toUpperCase() === u.pin.toUpperCase()) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const rev = reviews.find(
+                                      (r) => r.pin.toUpperCase() === u.pin.toUpperCase()
+                                    );
+                                    if (rev) setSelectedReview(rev);
+                                  }}
+                                  className="px-2 py-0.5 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer shadow-sm"
+                                  title="작성한 후기 새 카드로 확인"
+                                >
+                                  <MessageSquare className="w-2.5 h-2.5 text-amber-400" />
+                                  <span>후기 카드 보기</span>
+                                </button>
+                              )}
+                            </div>
                           ) : u.startedAt ? (
                             <span className="px-2.5 py-1 rounded-lg bg-amber-950/80 border border-amber-600 text-amber-300 font-bold font-mono">
                               Q{u.currentRoom}번 방
@@ -1233,11 +1293,224 @@ export default function AdminPage() {
         </section>
       </div>
 
+      {/* 관리자 수사 후기 상세 새 카드 모달 */}
+      {selectedReview && (
+        <div
+          className="fixed inset-0 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-fadeIn"
+          style={{ zIndex: 90 }}
+          onClick={() => setSelectedReview(null)}
+        >
+          <div
+            className="relative w-full max-w-2xl bg-[#1b1512] border-2 border-amber-600/70 rounded-3xl shadow-[0_25px_60px_rgba(0,0,0,0.95)] overflow-hidden flex flex-col max-h-[92vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-stone-800 bg-[#211a15]">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-stone-100 flex items-center gap-2">
+                    <span>명탐정 수사 후기 상세 카드</span>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-600/50 text-xs font-mono font-bold">
+                      PIN: {selectedReview.pin}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-stone-400">
+                    작성자 정보, 인증 사진 및 후기 전문을 확인하고 게시판 노출을 제어합니다.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Prev / Next buttons */}
+                {filteredReviews.length > 1 && (
+                  <div className="flex items-center bg-stone-900 rounded-xl border border-stone-800 p-0.5">
+                    <button
+                      type="button"
+                      disabled={currentReviewIndex <= 0}
+                      onClick={handlePrevReview}
+                      className="p-1.5 rounded-lg text-stone-400 hover:text-stone-100 hover:bg-stone-800 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition"
+                      title="이전 후기 (단축키: ←)"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="px-2 text-[11px] font-mono text-stone-400">
+                      {currentReviewIndex >= 0 ? currentReviewIndex + 1 : 1}/{filteredReviews.length}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={
+                        currentReviewIndex < 0 ||
+                        currentReviewIndex >= filteredReviews.length - 1
+                      }
+                      onClick={handleNextReview}
+                      className="p-1.5 rounded-lg text-stone-400 hover:text-stone-100 hover:bg-stone-800 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition"
+                      title="다음 후기 (단축키: →)"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Close Button */}
+                <button
+                  type="button"
+                  onClick={() => setSelectedReview(null)}
+                  className="p-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-stone-100 transition border border-stone-700 cursor-pointer"
+                  title="닫기 (ESC)"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-5 text-left">
+              {/* 1. Profile / Info Bar */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-[#251e19] border border-amber-900/30">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 text-stone-950 font-black text-xl flex items-center justify-center shadow-lg shrink-0">
+                    {selectedReview.name ? selectedReview.name.charAt(0).toUpperCase() : "탐"}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-amber-400 font-bold">수사관</span>
+                      <h4 className="text-lg font-black text-stone-100 tracking-tight">
+                        {selectedReview.name}
+                      </h4>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-stone-400 font-mono mt-0.5">
+                      <span>수사 암호: <strong className="text-amber-300">{selectedReview.pin}</strong></span>
+                      <span>•</span>
+                      <span>
+                        {selectedReview.createdAt
+                          ? new Date(selectedReview.createdAt).toLocaleString("ko-KR", {
+                              year: "numeric",
+                              month: "2-digit",
+                              day: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : "-"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {selectedReview.hidden ? (
+                    <span className="px-3 py-1.5 rounded-xl bg-red-950 text-red-300 border border-red-700/80 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                      <EyeOff className="w-3.5 h-3.5 text-red-400" />
+                      <span>게시판 숨김 상태</span>
+                    </span>
+                  ) : (
+                    <span className="px-3 py-1.5 rounded-xl bg-emerald-950 text-emerald-300 border border-emerald-700/80 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                      <Eye className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>클리어 유저에게 노출 중</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* 2. Photo Section */}
+              {selectedReview.photo ? (
+                <div className="rounded-2xl overflow-hidden border border-amber-600/40 bg-stone-950 shadow-inner relative group">
+                  <div className="bg-[#120e0b] px-3.5 py-2 border-b border-stone-800/80 flex items-center justify-between text-xs font-semibold text-stone-300">
+                    <span className="flex items-center gap-1.5 text-amber-400">
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      현장 인증 사진
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewPhoto(selectedReview.photo || null)}
+                      className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 text-[11px] font-bold border border-stone-700 flex items-center gap-1 transition cursor-pointer"
+                    >
+                      <Maximize2 className="w-3 h-3 text-amber-400" />
+                      <span>전체화면 확대</span>
+                    </button>
+                  </div>
+                  <div
+                    className="p-2 flex items-center justify-center bg-stone-950/80 cursor-pointer"
+                    onClick={() => setPreviewPhoto(selectedReview.photo || null)}
+                    title="클릭하여 원본 전체화면 보기"
+                  >
+                    <img
+                      src={selectedReview.photo}
+                      alt={`${selectedReview.name} 수사 인증 사진`}
+                      className="max-h-[360px] w-auto max-w-full object-contain rounded-xl shadow-md transition hover:scale-[1.01]"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="py-5 px-4 rounded-2xl bg-[#181310] border border-dashed border-stone-800 text-center text-stone-500 text-xs flex items-center justify-center gap-2">
+                  <ImageIcon className="w-4 h-4 text-stone-600" />
+                  <span>등록된 현장 인증 사진이 없습니다.</span>
+                </div>
+              )}
+
+              {/* 3. Review Content Section */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-[#14100c] border border-amber-900/40 shadow-inner">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-400 mb-2.5 pb-2 border-b border-stone-800/80">
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>수사 후기 내용 전문</span>
+                </div>
+                <p className="text-stone-100 text-sm sm:text-base leading-relaxed whitespace-pre-wrap font-medium break-words">
+                  {selectedReview.content}
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between p-4 sm:p-5 border-t border-stone-800 bg-[#211a15]">
+              <span className="text-xs text-stone-400 hidden sm:inline">
+                {selectedReview.hidden
+                  ? "현재 비밀 후기 게시판에서 숨김 처리되어 있습니다."
+                  : "현재 비밀 후기 게시판에 정상 노출 중입니다."}
+              </span>
+
+              <div className="flex items-center gap-2.5 ml-auto sm:ml-0">
+                <button
+                  type="button"
+                  onClick={() => handleToggleReview(selectedReview.pin, !selectedReview.hidden)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow ${
+                    selectedReview.hidden
+                      ? "bg-emerald-900/90 hover:bg-emerald-800 text-emerald-100 border border-emerald-600"
+                      : "bg-red-950/90 hover:bg-red-900 text-red-100 border border-red-700"
+                  }`}
+                >
+                  {selectedReview.hidden ? (
+                    <>
+                      <Eye className="w-4 h-4" />
+                      <span>게시판에 노출하기</span>
+                    </>
+                  ) : (
+                    <>
+                      <EyeOff className="w-4 h-4" />
+                      <span>게시판에서 숨기기</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedReview(null)}
+                  className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold transition border border-stone-700 cursor-pointer"
+                >
+                  닫기
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 관리자 후기 사진 확대 모달 */}
       {previewPhoto && (
         <div
           className="fixed inset-0 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md animate-fadeIn"
-          style={{ zIndex: 100 }}
+          style={{ zIndex: 110 }}
           onClick={() => setPreviewPhoto(null)}
         >
           <div
